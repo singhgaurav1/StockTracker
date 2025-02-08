@@ -125,17 +125,25 @@ try:
                     st.subheader("Implied Volatility Summary")
                     iv_col1, iv_col2, iv_col3 = st.columns(3)
 
+                    # Calculate IV metrics with NaN handling
+                    atm_calls = calls[calls['moneyness'] == 'ATM']
+                    atm_puts = puts[puts['moneyness'] == 'ATM']
+
+                    avg_call_iv = atm_calls['impliedVolatility'].mean() if not atm_calls.empty else 0
+                    avg_put_iv = atm_puts['impliedVolatility'].mean() if not atm_puts.empty else 0
+                    iv_skew = avg_put_iv - avg_call_iv if (avg_put_iv != 0 and avg_call_iv != 0) else 0
+
                     with iv_col1:
-                        avg_call_iv = calls[calls['moneyness'] == 'ATM']['impliedVolatility'].mean()
-                        st.metric("ATM Calls IV", f"{avg_call_iv:.2f}%")
+                        st.metric("ATM Calls IV", 
+                                f"{avg_call_iv:.2f}%" if avg_call_iv != 0 else "N/A")
 
                     with iv_col2:
-                        avg_put_iv = puts[puts['moneyness'] == 'ATM']['impliedVolatility'].mean()
-                        st.metric("ATM Puts IV", f"{avg_put_iv:.2f}%")
+                        st.metric("ATM Puts IV", 
+                                f"{avg_put_iv:.2f}%" if avg_put_iv != 0 else "N/A")
 
                     with iv_col3:
-                        iv_skew = avg_put_iv - avg_call_iv
-                        st.metric("IV Skew (P-C)", f"{iv_skew:.2f}%")
+                        st.metric("IV Skew (P-C)", 
+                                f"{iv_skew:.2f}%" if iv_skew != 0 else "N/A")
 
                     # Options Tables
                     col1, col2 = st.columns(2)

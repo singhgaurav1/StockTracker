@@ -66,6 +66,18 @@ def get_expiration_dates(ticker_symbol):
     except Exception as e:
         raise Exception(f"Error fetching expiration dates: {str(e)}")
 
+def categorize_moneyness(strike, current_price):
+    """
+    Categorize options as ITM, ATM, or OTM with a wider ATM range
+    """
+    percent_diff = abs(strike - current_price) / current_price
+    if percent_diff <= 0.02:  # 2% range for ATM
+        return 'ATM'
+    elif strike < current_price:
+        return 'ITM'
+    else:
+        return 'OTM'
+
 @st.cache_data(ttl=300)
 def get_options_chain(ticker_symbol, expiration_date):
     """
@@ -79,27 +91,19 @@ def get_options_chain(ticker_symbol, expiration_date):
 
         # Get options chain for the selected expiration
         options = ticker.option_chain(expiration_str)
+        current_price = ticker.info['currentPrice']
 
         # Clean and format calls dataframe
         calls = options.calls[['strike', 'lastPrice', 'bid', 'ask', 'volume', 'openInterest', 'impliedVolatility']]
         calls = calls.round(2)
         calls['impliedVolatility'] = (calls['impliedVolatility'] * 100).round(2)
-
-        # Add moneyness (ATM, ITM, OTM) indicator
-        current_price = ticker.info['currentPrice']
-        calls['moneyness'] = calls['strike'].apply(lambda x: 
-            'ITM' if x < current_price else
-            'ATM' if abs(x - current_price) < (current_price * 0.01) else 'OTM')
+        calls['moneyness'] = calls['strike'].apply(lambda x: categorize_moneyness(x, current_price))
 
         # Clean and format puts dataframe
         puts = options.puts[['strike', 'lastPrice', 'bid', 'ask', 'volume', 'openInterest', 'impliedVolatility']]
         puts = puts.round(2)
         puts['impliedVolatility'] = (puts['impliedVolatility'] * 100).round(2)
-
-        # Add moneyness indicator for puts
-        puts['moneyness'] = puts['strike'].apply(lambda x: 
-            'ITM' if x > current_price else
-            'ATM' if abs(x - current_price) < (current_price * 0.01) else 'OTM')
+        puts['moneyness'] = puts['strike'].apply(lambda x: categorize_moneyness(x, current_price))
 
         return calls, puts
     except Exception as e:
