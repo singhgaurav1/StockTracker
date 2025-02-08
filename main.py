@@ -280,91 +280,155 @@ try:
 
                     with calc_col1:
                         if st.button("Calculate Call Profit/Loss") and st.session_state.selected_call is not None:
-                            option = st.session_state.selected_call
-                            strike = option['strike']
-                            current_price = info['currentPrice']
-                            iv = option['impliedVolatility'] / 100  # Convert from percentage
-                            option_price = option['lastPrice']
-                            open_interest = option['openInterest']
+                            try:
+                                option = st.session_state.selected_call
 
-                            # Get months to expiry
-                            months_to_expiry = get_months_to_expiry(selected_date)
-                            month_range = range(1, months_to_expiry + 1)
+                                # Validate all numeric inputs
+                                try:
+                                    strike = float(option['strike'])
+                                    current_price = float(info['currentPrice'])
+                                    iv = float(option['impliedVolatility']) / 100
+                                    option_price = float(option['lastPrice'])
+                                    open_interest = int(option['openInterest'])
+                                except (ValueError, TypeError) as e:
+                                    st.error(f"Invalid numeric value in option data: {str(e)}")
+                                    st.info("Please select a different strike price or refresh the data.")
+                                    return
 
-                            # Generate month/year headers
-                            month_headers = get_month_year_headers(datetime.now(), months_to_expiry)
+                                if option_price <= 0:
+                                    st.error("Invalid option price. Please select another strike price.")
+                                    st.info("Make sure to select an option with valid last price.")
+                                    return
 
-                            # Generate price steps
-                            price_steps = create_price_range_steps(strike)
-                            open_interest_values = [open_interest for _ in price_steps] #Use same open interest for all price steps
+                                # Get months to expiry
+                                months_to_expiry = get_months_to_expiry(selected_date)
+                                if months_to_expiry <= 0:
+                                    st.error("Invalid expiration date")
+                                    return
 
-                            # Calculate profit table
-                            profit_data = []
-                            for price, pct_change in price_steps:
-                                row = {
-                                    'Price': f'${price:.2f}',
-                                    '% Change': f'{pct_change}%'
-                                }
-                                for i, month in enumerate(month_range):
-                                    profit = calculate_option_profit(
-                                        current_price=current_price,
-                                        strike=strike,
-                                        option_price=option_price,
-                                        volatility=iv,
-                                        time_to_expiry=month/12,
-                                        is_call=True,
-                                        target_price=price
-                                    )
-                                    row[month_headers[i]] = f'{profit:.1f}%'
-                                profit_data.append(row)
+                                month_range = range(1, months_to_expiry + 1)
+                                month_headers = get_month_year_headers(datetime.now(), months_to_expiry)
 
-                            profit_df = pd.DataFrame(profit_data)
-                            styled_df = style_profit_table(profit_df, open_interest=open_interest_values)
-                            st.dataframe(styled_df, height=400)
+                                # Generate price steps with validation
+                                try:
+                                    price_steps = create_price_range_steps(strike)
+                                    if not price_steps:
+                                        st.error("Could not generate valid price ranges")
+                                        return
+                                    open_interest_values = [open_interest for _ in price_steps]
+                                except Exception as e:
+                                    st.error(f"Error generating price steps: {str(e)}")
+                                    return
+
+                                # Calculate profit table
+                                profit_data = []
+                                for price, pct_change in price_steps:
+                                    try:
+                                        row = {
+                                            'Price': f'${price:.2f}',
+                                            '% Change': f'{pct_change}%'
+                                        }
+                                        for i, month in enumerate(month_range):
+                                            profit = calculate_option_profit(
+                                                current_price=current_price,
+                                                strike=strike,
+                                                option_price=option_price,
+                                                volatility=iv,
+                                                time_to_expiry=month/12,
+                                                is_call=True,
+                                                target_price=price
+                                            )
+                                            row[month_headers[i]] = f'{profit:.1f}%'
+                                        profit_data.append(row)
+                                    except Exception as e:
+                                        st.error(f"Error calculating profit for price ${price:.2f}: {str(e)}")
+                                        continue
+
+                                if not profit_data:
+                                    st.error("No valid profit calculations generated")
+                                    return
+
+                                profit_df = pd.DataFrame(profit_data)
+                                styled_df = style_profit_table(profit_df, open_interest=open_interest_values)
+                                st.dataframe(styled_df, height=400)
+                            except Exception as e:
+                                st.error(f"Error calculating call option profits: {str(e)}")
 
                     with calc_col2:
                         if st.button("Calculate Put Profit/Loss") and st.session_state.selected_put is not None:
-                            option = st.session_state.selected_put
-                            strike = option['strike']
-                            current_price = info['currentPrice']
-                            iv = option['impliedVolatility'] / 100  # Convert from percentage
-                            option_price = option['lastPrice']
-                            open_interest = option['openInterest']
+                            try:
+                                option = st.session_state.selected_put
 
-                            # Get months to expiry
-                            months_to_expiry = get_months_to_expiry(selected_date)
-                            month_range = range(1, months_to_expiry + 1)
+                                # Validate all numeric inputs
+                                try:
+                                    strike = float(option['strike'])
+                                    current_price = float(info['currentPrice'])
+                                    iv = float(option['impliedVolatility']) / 100
+                                    option_price = float(option['lastPrice'])
+                                    open_interest = int(option['openInterest'])
+                                except (ValueError, TypeError) as e:
+                                    st.error(f"Invalid numeric value in option data: {str(e)}")
+                                    st.info("Please select a different strike price or refresh the data.")
+                                    return
 
-                            # Generate month/year headers
-                            month_headers = get_month_year_headers(datetime.now(), months_to_expiry)
+                                if option_price <= 0:
+                                    st.error("Invalid option price. Please select another strike price.")
+                                    st.info("Make sure to select an option with valid last price.")
+                                    return
 
-                            # Generate price steps
-                            price_steps = create_price_range_steps(strike)
-                            open_interest_values = [open_interest for _ in price_steps] #Use same open interest for all price steps
+                                # Get months to expiry
+                                months_to_expiry = get_months_to_expiry(selected_date)
+                                if months_to_expiry <= 0:
+                                    st.error("Invalid expiration date")
+                                    return
 
-                            # Calculate profit table
-                            profit_data = []
-                            for price, pct_change in price_steps:
-                                row = {
-                                    'Price': f'${price:.2f}',
-                                    '% Change': f'{pct_change}%'
-                                }
-                                for i, month in enumerate(month_range):
-                                    profit = calculate_option_profit(
-                                        current_price=current_price,
-                                        strike=strike,
-                                        option_price=option_price,
-                                        volatility=iv,
-                                        time_to_expiry=month/12,
-                                        is_call=False,
-                                        target_price=price
-                                    )
-                                    row[month_headers[i]] = f'{profit:.1f}%'
-                                profit_data.append(row)
+                                month_range = range(1, months_to_expiry + 1)
+                                month_headers = get_month_year_headers(datetime.now(), months_to_expiry)
 
-                            profit_df = pd.DataFrame(profit_data)
-                            styled_df = style_profit_table(profit_df, open_interest=open_interest_values)
-                            st.dataframe(styled_df, height=400)
+                                # Generate price steps with validation
+                                try:
+                                    price_steps = create_price_range_steps(strike)
+                                    if not price_steps:
+                                        st.error("Could not generate valid price ranges")
+                                        return
+                                    open_interest_values = [open_interest for _ in price_steps]
+                                except Exception as e:
+                                    st.error(f"Error generating price steps: {str(e)}")
+                                    return
+
+                                # Calculate profit table
+                                profit_data = []
+                                for price, pct_change in price_steps:
+                                    try:
+                                        row = {
+                                            'Price': f'${price:.2f}',
+                                            '% Change': f'{pct_change}%'
+                                        }
+                                        for i, month in enumerate(month_range):
+                                            profit = calculate_option_profit(
+                                                current_price=current_price,
+                                                strike=strike,
+                                                option_price=option_price,
+                                                volatility=iv,
+                                                time_to_expiry=month/12,
+                                                is_call=False,
+                                                target_price=price
+                                            )
+                                            row[month_headers[i]] = f'{profit:.1f}%'
+                                        profit_data.append(row)
+                                    except Exception as e:
+                                        st.error(f"Error calculating profit for price ${price:.2f}: {str(e)}")
+                                        continue
+
+                                if not profit_data:
+                                    st.error("No valid profit calculations generated")
+                                    return
+
+                                profit_df = pd.DataFrame(profit_data)
+                                styled_df = style_profit_table(profit_df, open_interest=open_interest_values)
+                                st.dataframe(styled_df, height=400)
+                            except Exception as e:
+                                st.error(f"Error calculating put option profits: {str(e)}")
 
                 else:
                     st.warning("No options data available for the selected date.")
