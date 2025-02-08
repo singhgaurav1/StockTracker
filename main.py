@@ -5,22 +5,23 @@ import numpy as np
 from utils import get_stock_data, get_options_chain, format_price_change, get_expiration_dates, calculate_option_profit
 from datetime import datetime
 
-# Page configuration
+# Page configuration and CSS loading remain unchanged
 st.set_page_config(
     page_title="Stock & Options Viewer",
     page_icon="📈",
     layout="wide"
 )
 
-# Load custom CSS
 with open("styles.css") as f:
     st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
-# Initialize session state for selected options
+# Initialize session states
 if 'selected_call' not in st.session_state:
     st.session_state.selected_call = None
 if 'selected_put' not in st.session_state:
     st.session_state.selected_put = None
+if 'price_range' not in st.session_state:
+    st.session_state.price_range = None
 
 # Header
 st.title("📈 Stock & Options Viewer")
@@ -67,6 +68,24 @@ try:
 
             # Volatility Metrics
             st.subheader("Volatility Analysis")
+
+            # Add price range controls
+            current_price = info['currentPrice']
+            min_price = current_price * 0.5
+            max_price = current_price * 1.5
+
+            st.markdown("### Price Range Selection")
+            price_range = st.slider(
+                "Select price range for volatility analysis",
+                min_value=float(min_price),
+                max_value=float(max_price),
+                value=(float(current_price * 0.8), float(current_price * 1.2)),
+                step=float(current_price * 0.01),
+                format="$%.2f",
+                key="price_range_slider"
+            )
+            st.session_state.price_range = price_range
+
             vol_col1, vol_col2 = st.columns(2)
 
             with vol_col1:
@@ -77,6 +96,14 @@ try:
                     y=history['Historical_Volatility'],
                     name='30-Day Historical Volatility'
                 ))
+                # Add price range overlay
+                fig_vol.add_hrect(
+                    y0=price_range[0],
+                    y1=price_range[1],
+                    fillcolor="rgba(0,100,255,0.1)",
+                    line_width=0,
+                    name="Selected Range"
+                )
                 fig_vol.update_layout(
                     title="Historical Volatility (30-Day)",
                     xaxis_title="Date",
@@ -87,6 +114,54 @@ try:
                 st.plotly_chart(fig_vol, use_container_width=True)
 
             with vol_col2:
+                # Volatility Smile/Skew Chart
+                if 'selected_date' in locals() and calls is not None and puts is not None:
+                    # Combine calls and puts for volatility smile
+                    strikes = []
+                    ivs = []
+
+                    # Filter options within selected price range
+                    filtered_calls = calls[
+                        (calls['strike'] >= price_range[0]) & 
+                        (calls['strike'] <= price_range[1])
+                    ]
+                    filtered_puts = puts[
+                        (puts['strike'] >= price_range[0]) & 
+                        (puts['strike'] <= price_range[1])
+                    ]
+
+                    # Create volatility smile plot
+                    fig_smile = go.Figure()
+
+                    # Add calls IV
+                    fig_smile.add_trace(go.Scatter(
+                        x=filtered_calls['strike'],
+                        y=filtered_calls['impliedVolatility'],
+                        name='Calls IV',
+                        mode='lines+markers',
+                        marker=dict(size=6),
+                        line=dict(color='blue')
+                    ))
+
+                    # Add puts IV
+                    fig_smile.add_trace(go.Scatter(
+                        x=filtered_puts['strike'],
+                        y=filtered_puts['impliedVolatility'],
+                        name='Puts IV',
+                        mode='lines+markers',
+                        marker=dict(size=6),
+                        line=dict(color='red')
+                    ))
+
+                    fig_smile.update_layout(
+                        title="Volatility Smile",
+                        xaxis_title="Strike Price ($)",
+                        yaxis_title="Implied Volatility (%)",
+                        height=300,
+                        margin=dict(l=0, r=0, t=30, b=0)
+                    )
+                    st.plotly_chart(fig_smile, use_container_width=True)
+
                 # Current Volatility Metrics
                 current_hist_vol = history['Historical_Volatility'].iloc[-1]
                 st.metric(
@@ -97,10 +172,10 @@ try:
             # Price Chart
             st.subheader("Price History")
             fig = go.Figure(data=[go.Candlestick(x=history.index,
-                                                open=history['Open'],
-                                                high=history['High'],
-                                                low=history['Low'],
-                                                close=history['Close'])])
+                                                    open=history['Open'],
+                                                    high=history['High'],
+                                                    low=history['Low'],
+                                                    close=history['Close'])])
             fig.update_layout(
                 xaxis_title="Date",
                 yaxis_title="Price ($)",
@@ -141,16 +216,16 @@ try:
                     iv_skew = avg_put_iv - avg_call_iv if (avg_put_iv != 0 and avg_call_iv != 0) else 0
 
                     with iv_col1:
-                        st.metric("ATM Calls IV", 
-                                f"{avg_call_iv:.2f}%" if avg_call_iv != 0 else "N/A")
+                        st.metric("ATM Calls IV",
+                                    f"{avg_call_iv:.2f}%" if avg_call_iv != 0 else "N/A")
 
                     with iv_col2:
-                        st.metric("ATM Puts IV", 
-                                f"{avg_put_iv:.2f}%" if avg_put_iv != 0 else "N/A")
+                        st.metric("ATM Puts IV",
+                                    f"{avg_put_iv:.2f}%" if avg_put_iv != 0 else "N/A")
 
                     with iv_col3:
-                        st.metric("IV Skew (P-C)", 
-                                f"{iv_skew:.2f}%" if iv_skew != 0 else "N/A")
+                        st.metric("IV Skew (P-C)",
+                                    f"{iv_skew:.2f}%" if iv_skew != 0 else "N/A")
 
                     # Options Tables with selectable rows
                     col1, col2 = st.columns(2)
@@ -225,7 +300,7 @@ try:
                                         strike=strike,
                                         option_price=option_price,
                                         volatility=iv,
-                                        time_to_expiry=month/12,
+                                        time_to_expiry=month / 12,
                                         is_call=True,
                                         target_price=price
                                     )
@@ -257,7 +332,7 @@ try:
                                         strike=strike,
                                         option_price=option_price,
                                         volatility=iv,
-                                        time_to_expiry=month/12,
+                                        time_to_expiry=month / 12,
                                         is_call=False,
                                         target_price=price
                                     )
