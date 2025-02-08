@@ -150,13 +150,16 @@ def get_stock_data(ticker_symbol):
     try:
         ticker = get_ticker(ticker_symbol)
 
+        # Get latest price from history if needed
+        latest_close = history['Close'].iloc[-1] if not history.empty else 0.0
+        
         # Get info and convert to dict
         info = {
             'longName': ticker.info.get('longName', ticker_symbol),
-            'currentPrice': ticker.info.get('currentPrice', ticker.info.get('regularMarketPrice', 0.0)),
-            'previousClose': ticker.info.get('previousClose', ticker.info.get('regularMarketPreviousClose', 0.0)),
-            'dayHigh': ticker.info.get('dayHigh', ticker.info.get('regularMarketDayHigh', 0.0)),
-            'dayLow': ticker.info.get('dayLow', ticker.info.get('regularMarketDayLow', 0.0)),
+            'currentPrice': ticker.info.get('currentPrice', ticker.info.get('regularMarketPrice', latest_close)),
+            'previousClose': ticker.info.get('previousClose', ticker.info.get('regularMarketPreviousClose', latest_close)),
+            'dayHigh': ticker.info.get('dayHigh', ticker.info.get('regularMarketDayHigh', latest_close)),
+            'dayLow': ticker.info.get('dayLow', ticker.info.get('regularMarketDayLow', latest_close)),
             'volume': ticker.info.get('volume', ticker.info.get('regularMarketVolume', 0)),
             'averageVolume': ticker.info.get('averageVolume', 0)
         }
