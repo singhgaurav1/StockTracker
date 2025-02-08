@@ -28,18 +28,18 @@ try:
     if ticker_symbol:
         with st.spinner('Loading data...'):
             # Fetch stock data
-            ticker, info, history = get_stock_data(ticker_symbol)
-            
+            info, history = get_stock_data(ticker_symbol)
+
             # Display stock info
             col1, col2, col3 = st.columns([2, 1, 1])
-            
+
             with col1:
                 st.markdown(f"### {info['longName']} ({ticker_symbol})")
                 current_price = info['currentPrice']
                 previous_close = info['previousClose']
                 price_change = current_price - previous_close
                 price_change_percent = (price_change / previous_close) * 100
-                
+
                 st.markdown(
                     f"<div class='stock-price'>${current_price:.2f}</div>",
                     unsafe_allow_html=True
@@ -48,15 +48,15 @@ try:
                     f"{format_price_change(price_change)} ({format_price_change(price_change_percent, percentage=True)})",
                     unsafe_allow_html=True
                 )
-            
+
             with col2:
                 st.metric("Day High", f"${info['dayHigh']:.2f}")
                 st.metric("Volume", f"{info['volume']:,}")
-            
+
             with col3:
                 st.metric("Day Low", f"${info['dayLow']:.2f}")
                 st.metric("Avg Volume", f"{info['averageVolume']:,}")
-            
+
             # Price Chart
             st.subheader("Price History")
             fig = go.Figure(data=[go.Candlestick(x=history.index,
@@ -71,14 +71,14 @@ try:
                 margin=dict(l=0, r=0, t=0, b=0)
             )
             st.plotly_chart(fig, use_container_width=True)
-            
+
             # Options Chain
             st.subheader("Options Chain")
-            calls, puts = get_options_chain(ticker)
-            
+            calls, puts = get_options_chain(ticker_symbol)
+
             if not calls.empty and not puts.empty:
                 col1, col2 = st.columns(2)
-                
+
                 with col1:
                     st.markdown("### Calls")
                     st.dataframe(
@@ -91,7 +91,7 @@ try:
                         }),
                         height=400
                     )
-                
+
                 with col2:
                     st.markdown("### Puts")
                     st.dataframe(
