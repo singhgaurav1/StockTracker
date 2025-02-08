@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import numpy as np
-from utils import get_stock_data, get_options_chain, format_price_change, get_expiration_dates, calculate_option_profit
+from utils import get_stock_data, get_options_chain, format_price_change, get_expiration_dates, calculate_option_profit, get_months_to_expiry, create_price_range_steps, style_profit_table
 from datetime import datetime
 
 # Page configuration and CSS loading remain unchanged
@@ -122,11 +122,11 @@ try:
 
                     # Filter options within selected price range
                     filtered_calls = calls[
-                        (calls['strike'] >= price_range[0]) & 
+                        (calls['strike'] >= price_range[0]) &
                         (calls['strike'] <= price_range[1])
                     ]
                     filtered_puts = puts[
-                        (puts['strike'] >= price_range[0]) & 
+                        (puts['strike'] >= price_range[0]) &
                         (puts['strike'] <= price_range[1])
                     ]
 
@@ -286,21 +286,27 @@ try:
                             iv = option['impliedVolatility'] / 100  # Convert from percentage
                             option_price = option['lastPrice']
 
-                            # Generate price range
-                            price_range = np.linspace(current_price * 0.5, current_price * 1.5, 20)
-                            months = [1, 2, 3, 6]
+                            # Get months to expiry
+                            months_to_expiry = get_months_to_expiry(selected_date)
+                            month_range = range(1, months_to_expiry + 1)
+
+                            # Generate price steps
+                            price_steps = create_price_range_steps(strike)
 
                             # Calculate profit table
                             profit_data = []
-                            for price in price_range:
-                                row = {'Price': f'${price:.2f}'}
-                                for month in months:
+                            for price, pct_change in price_steps:
+                                row = {
+                                    'Price': f'${price:.2f}',
+                                    '% Change': f'{pct_change}%'
+                                }
+                                for month in month_range:
                                     profit = calculate_option_profit(
                                         current_price=current_price,
                                         strike=strike,
                                         option_price=option_price,
                                         volatility=iv,
-                                        time_to_expiry=month / 12,
+                                        time_to_expiry=month/12,
                                         is_call=True,
                                         target_price=price
                                     )
@@ -308,7 +314,8 @@ try:
                                 profit_data.append(row)
 
                             profit_df = pd.DataFrame(profit_data)
-                            st.dataframe(profit_df, height=400)
+                            styled_df = style_profit_table(profit_df)
+                            st.dataframe(styled_df, height=400)
 
                     with calc_col2:
                         if st.button("Calculate Put Profit/Loss") and st.session_state.selected_put is not None:
@@ -318,21 +325,27 @@ try:
                             iv = option['impliedVolatility'] / 100  # Convert from percentage
                             option_price = option['lastPrice']
 
-                            # Generate price range
-                            price_range = np.linspace(current_price * 0.5, current_price * 1.5, 20)
-                            months = [1, 2, 3, 6]
+                            # Get months to expiry
+                            months_to_expiry = get_months_to_expiry(selected_date)
+                            month_range = range(1, months_to_expiry + 1)
+
+                            # Generate price steps
+                            price_steps = create_price_range_steps(strike)
 
                             # Calculate profit table
                             profit_data = []
-                            for price in price_range:
-                                row = {'Price': f'${price:.2f}'}
-                                for month in months:
+                            for price, pct_change in price_steps:
+                                row = {
+                                    'Price': f'${price:.2f}',
+                                    '% Change': f'{pct_change}%'
+                                }
+                                for month in month_range:
                                     profit = calculate_option_profit(
                                         current_price=current_price,
                                         strike=strike,
                                         option_price=option_price,
                                         volatility=iv,
-                                        time_to_expiry=month / 12,
+                                        time_to_expiry=month/12,
                                         is_call=False,
                                         target_price=price
                                     )
@@ -340,7 +353,8 @@ try:
                                 profit_data.append(row)
 
                             profit_df = pd.DataFrame(profit_data)
-                            st.dataframe(profit_df, height=400)
+                            styled_df = style_profit_table(profit_df)
+                            st.dataframe(styled_df, height=400)
 
                 else:
                     st.warning("No options data available for the selected date.")
