@@ -150,35 +150,20 @@ def get_stock_data(ticker_symbol):
     try:
         ticker = get_ticker(ticker_symbol)
 
-        # Get current price with fallbacks
-        current_price = (
-            ticker.info.get('currentPrice') or 
-            ticker.info.get('regularMarketPrice') or 
-            ticker.info.get('previousClose')
-        )
-
-        if not current_price:
-            raise Exception(f"Unable to get price data for {ticker_symbol}")
-
-        # Get info and convert to dict with safe fallbacks
+        # Get info and convert to dict
         info = {
             'longName': ticker.info.get('longName', ticker_symbol),
-            'currentPrice': float(current_price),
-            'previousClose': float(ticker.info.get('previousClose', current_price)),
-            'dayHigh': float(ticker.info.get('dayHigh', current_price)),
-            'dayLow': float(ticker.info.get('dayLow', current_price)),
-            'volume': int(ticker.info.get('volume', 0) or 0),
-            'averageVolume': int(ticker.info.get('averageVolume', 0) or 0)
+            'currentPrice': ticker.info.get('currentPrice', 0.0),
+            'previousClose': ticker.info.get('previousClose', 0.0),
+            'dayHigh': ticker.info.get('dayHigh', 0.0),
+            'dayLow': ticker.info.get('dayLow', 0.0),
+            'volume': ticker.info.get('volume', 0),
+            'averageVolume': ticker.info.get('averageVolume', 0)
         }
 
-        # Get history and calculate volatility with error handling
-        try:
-            history = ticker.history(period="1y")
-            if history.empty:
-                raise Exception("No historical data available")
-            history['Historical_Volatility'] = calculate_historical_volatility(history)
-        except Exception as e:
-            raise Exception(f"Error fetching historical data: {str(e)}")
+        # Get history and calculate volatility
+        history = ticker.history(period="1y")
+        history['Historical_Volatility'] = calculate_historical_volatility(history)
 
         return info, history
 
@@ -213,7 +198,7 @@ def categorize_moneyness(strike, current_price):
 @st.cache_data(ttl=300)
 def get_options_chain(ticker_symbol, expiration_date):
     """
-    Fetch options chain data with caching and improved error handling
+    Fetch options chain data with caching
     """
     try:
         ticker = get_ticker(ticker_symbol)
@@ -221,41 +206,21 @@ def get_options_chain(ticker_symbol, expiration_date):
         # Format date back to string format required by yfinance
         expiration_str = expiration_date.strftime('%Y-%m-%d')
 
-        # Get current price with fallbacks
-        current_price = (
-            ticker.info.get('currentPrice') or 
-            ticker.info.get('regularMarketPrice') or 
-            ticker.info.get('previousClose')
-        )
-
-        if not current_price:
-            raise Exception(f"Unable to get current price for {ticker_symbol}")
-
         # Get options chain for the selected expiration
-        try:
-            options = ticker.option_chain(expiration_str)
-        except Exception as e:
-            raise Exception(f"Error fetching options chain: {str(e)}")
+        options = ticker.option_chain(expiration_str)
+        current_price = ticker.info['currentPrice']
 
         # Clean and format calls dataframe
-        try:
-            calls = options.calls[['strike', 'lastPrice', 'bid', 'ask', 'volume', 'openInterest', 'impliedVolatility']]
-            calls = calls.fillna(0)  # Fill NaN values with 0
-            calls = calls.round(2)
-            calls['impliedVolatility'] = (calls['impliedVolatility'] * 100).round(2)
-            calls['moneyness'] = calls['strike'].apply(lambda x: categorize_moneyness(x, current_price))
-        except Exception as e:
-            raise Exception(f"Error processing calls data: {str(e)}")
+        calls = options.calls[['strike', 'lastPrice', 'bid', 'ask', 'volume', 'openInterest', 'impliedVolatility']]
+        calls = calls.round(2)
+        calls['impliedVolatility'] = (calls['impliedVolatility'] * 100).round(2)
+        calls['moneyness'] = calls['strike'].apply(lambda x: categorize_moneyness(x, current_price))
 
         # Clean and format puts dataframe
-        try:
-            puts = options.puts[['strike', 'lastPrice', 'bid', 'ask', 'volume', 'openInterest', 'impliedVolatility']]
-            puts = puts.fillna(0)  # Fill NaN values with 0
-            puts = puts.round(2)
-            puts['impliedVolatility'] = (puts['impliedVolatility'] * 100).round(2)
-            puts['moneyness'] = puts['strike'].apply(lambda x: categorize_moneyness(x, current_price))
-        except Exception as e:
-            raise Exception(f"Error processing puts data: {str(e)}")
+        puts = options.puts[['strike', 'lastPrice', 'bid', 'ask', 'volume', 'openInterest', 'impliedVolatility']]
+        puts = puts.round(2)
+        puts['impliedVolatility'] = (puts['impliedVolatility'] * 100).round(2)
+        puts['moneyness'] = puts['strike'].apply(lambda x: categorize_moneyness(x, current_price))
 
         return calls, puts
     except Exception as e:
