@@ -1,5 +1,6 @@
 import yfinance as yf
 import pandas as pd
+import numpy as np
 from datetime import datetime, timedelta
 import streamlit as st
 
@@ -12,6 +13,16 @@ def get_ticker(ticker_symbol):
         return yf.Ticker(ticker_symbol)
     except Exception as e:
         raise Exception(f"Error creating ticker for {ticker_symbol}: {str(e)}")
+
+def calculate_historical_volatility(history, window=30):
+    """
+    Calculate historical volatility using daily returns
+    """
+    # Calculate daily returns
+    returns = np.log(history['Close'] / history['Close'].shift(1))
+    # Calculate rolling standard deviation
+    hist_vol = returns.rolling(window=window).std() * np.sqrt(252) * 100
+    return hist_vol
 
 @st.cache_data(ttl=300)  # Cache data for 5 minutes
 def get_stock_data(ticker_symbol):
@@ -33,10 +44,12 @@ def get_stock_data(ticker_symbol):
             'averageVolume': ticker.info.get('averageVolume', 0)
         }
 
-        # Get history
+        # Get history and calculate volatility
         history = ticker.history(period="1y")
+        history['Historical_Volatility'] = calculate_historical_volatility(history)
 
         return info, history
+
     except Exception as e:
         raise Exception(f"Error fetching data for {ticker_symbol}: {str(e)}")
 
@@ -72,10 +85,21 @@ def get_options_chain(ticker_symbol, expiration_date):
         calls = calls.round(2)
         calls['impliedVolatility'] = (calls['impliedVolatility'] * 100).round(2)
 
+        # Add moneyness (ATM, ITM, OTM) indicator
+        current_price = ticker.info['currentPrice']
+        calls['moneyness'] = calls['strike'].apply(lambda x: 
+            'ITM' if x < current_price else
+            'ATM' if abs(x - current_price) < (current_price * 0.01) else 'OTM')
+
         # Clean and format puts dataframe
         puts = options.puts[['strike', 'lastPrice', 'bid', 'ask', 'volume', 'openInterest', 'impliedVolatility']]
         puts = puts.round(2)
         puts['impliedVolatility'] = (puts['impliedVolatility'] * 100).round(2)
+
+        # Add moneyness indicator for puts
+        puts['moneyness'] = puts['strike'].apply(lambda x: 
+            'ITM' if x > current_price else
+            'ATM' if abs(x - current_price) < (current_price * 0.01) else 'OTM')
 
         return calls, puts
     except Exception as e:

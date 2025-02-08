@@ -58,6 +58,35 @@ try:
                 st.metric("Day Low", f"${info['dayLow']:.2f}")
                 st.metric("Avg Volume", f"{info['averageVolume']:,}")
 
+            # Volatility Metrics
+            st.subheader("Volatility Analysis")
+            vol_col1, vol_col2 = st.columns(2)
+
+            with vol_col1:
+                # Historical Volatility Chart
+                fig_vol = go.Figure()
+                fig_vol.add_trace(go.Scatter(
+                    x=history.index,
+                    y=history['Historical_Volatility'],
+                    name='30-Day Historical Volatility'
+                ))
+                fig_vol.update_layout(
+                    title="Historical Volatility (30-Day)",
+                    xaxis_title="Date",
+                    yaxis_title="Volatility (%)",
+                    height=300,
+                    margin=dict(l=0, r=0, t=30, b=0)
+                )
+                st.plotly_chart(fig_vol, use_container_width=True)
+
+            with vol_col2:
+                # Current Volatility Metrics
+                current_hist_vol = history['Historical_Volatility'].iloc[-1]
+                st.metric(
+                    "Current 30-Day Historical Volatility",
+                    f"{current_hist_vol:.2f}%"
+                )
+
             # Price Chart
             st.subheader("Price History")
             fig = go.Figure(data=[go.Candlestick(x=history.index,
@@ -92,6 +121,23 @@ try:
                 calls, puts = get_options_chain(ticker_symbol, selected_date)
 
                 if not calls.empty and not puts.empty:
+                    # IV Summary
+                    st.subheader("Implied Volatility Summary")
+                    iv_col1, iv_col2, iv_col3 = st.columns(3)
+
+                    with iv_col1:
+                        avg_call_iv = calls[calls['moneyness'] == 'ATM']['impliedVolatility'].mean()
+                        st.metric("ATM Calls IV", f"{avg_call_iv:.2f}%")
+
+                    with iv_col2:
+                        avg_put_iv = puts[puts['moneyness'] == 'ATM']['impliedVolatility'].mean()
+                        st.metric("ATM Puts IV", f"{avg_put_iv:.2f}%")
+
+                    with iv_col3:
+                        iv_skew = avg_put_iv - avg_call_iv
+                        st.metric("IV Skew (P-C)", f"{iv_skew:.2f}%")
+
+                    # Options Tables
                     col1, col2 = st.columns(2)
 
                     with col1:
