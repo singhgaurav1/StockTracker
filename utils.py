@@ -86,9 +86,19 @@ def create_price_range_steps(current_price):
             steps.append((price, pct))
     return steps
 
-def style_profit_table(df):
+def get_month_year_headers(current_date, months_count):
     """
-    Apply color gradient styling to profit/loss values
+    Generate month and year headers for the profit table
+    """
+    headers = []
+    for i in range(months_count):
+        next_date = current_date + timedelta(days=30 * (i + 1))
+        headers.append(next_date.strftime('%b %Y'))
+    return headers
+
+def style_profit_table(df, open_interest=None):
+    """
+    Apply color gradient styling to profit/loss values and open interest
     """
     def color_profit_loss(val):
         try:
@@ -105,9 +115,30 @@ def style_profit_table(df):
         except:
             return ''
 
-    # Apply styling to all columns except Price and % Change
+    def color_open_interest(val):
+        if open_interest is None or val not in open_interest:
+            return ''
+        # Get the relative intensity based on open interest
+        max_oi = max(open_interest)
+        min_oi = min(open_interest)
+        if max_oi == min_oi:
+            intensity = 0.5
+        else:
+            intensity = (val - min_oi) / (max_oi - min_oi)
+        return f'background-color: rgba(128, 128, 128, {intensity})'
+
+    # Create a styler object
+    styler = df.style
+
+    # Apply profit/loss coloring to numeric columns (excluding Price and % Change)
     numeric_columns = df.columns.difference(['Price', '% Change'])
-    return df.style.applymap(color_profit_loss, subset=numeric_columns)
+    styler = styler.applymap(color_profit_loss, subset=numeric_columns)
+
+    # Apply open interest coloring to Price column if open interest data is provided
+    if open_interest is not None:
+        styler = styler.applymap(color_open_interest, subset=['Price'])
+
+    return styler
 
 
 @st.cache_data(ttl=300)  # Cache data for 5 minutes

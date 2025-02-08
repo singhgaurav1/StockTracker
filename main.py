@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import numpy as np
-from utils import get_stock_data, get_options_chain, format_price_change, get_expiration_dates, calculate_option_profit, get_months_to_expiry, create_price_range_steps, style_profit_table
+from utils import get_stock_data, get_options_chain, format_price_change, get_expiration_dates, calculate_option_profit, get_months_to_expiry, create_price_range_steps, style_profit_table, get_month_year_headers
 from datetime import datetime
 
 # Page configuration and CSS loading remain unchanged
@@ -285,13 +285,18 @@ try:
                             current_price = info['currentPrice']
                             iv = option['impliedVolatility'] / 100  # Convert from percentage
                             option_price = option['lastPrice']
+                            open_interest = option['openInterest']
 
                             # Get months to expiry
                             months_to_expiry = get_months_to_expiry(selected_date)
                             month_range = range(1, months_to_expiry + 1)
 
+                            # Generate month/year headers
+                            month_headers = get_month_year_headers(datetime.now(), months_to_expiry)
+
                             # Generate price steps
                             price_steps = create_price_range_steps(strike)
+                            open_interest_values = [open_interest for _ in price_steps] #Use same open interest for all price steps
 
                             # Calculate profit table
                             profit_data = []
@@ -300,7 +305,7 @@ try:
                                     'Price': f'${price:.2f}',
                                     '% Change': f'{pct_change}%'
                                 }
-                                for month in month_range:
+                                for i, month in enumerate(month_range):
                                     profit = calculate_option_profit(
                                         current_price=current_price,
                                         strike=strike,
@@ -310,11 +315,11 @@ try:
                                         is_call=True,
                                         target_price=price
                                     )
-                                    row[f'{month}m'] = f'{profit:.1f}%'
+                                    row[month_headers[i]] = f'{profit:.1f}%'
                                 profit_data.append(row)
 
                             profit_df = pd.DataFrame(profit_data)
-                            styled_df = style_profit_table(profit_df)
+                            styled_df = style_profit_table(profit_df, open_interest=open_interest_values)
                             st.dataframe(styled_df, height=400)
 
                     with calc_col2:
@@ -324,13 +329,18 @@ try:
                             current_price = info['currentPrice']
                             iv = option['impliedVolatility'] / 100  # Convert from percentage
                             option_price = option['lastPrice']
+                            open_interest = option['openInterest']
 
                             # Get months to expiry
                             months_to_expiry = get_months_to_expiry(selected_date)
                             month_range = range(1, months_to_expiry + 1)
 
+                            # Generate month/year headers
+                            month_headers = get_month_year_headers(datetime.now(), months_to_expiry)
+
                             # Generate price steps
                             price_steps = create_price_range_steps(strike)
+                            open_interest_values = [open_interest for _ in price_steps] #Use same open interest for all price steps
 
                             # Calculate profit table
                             profit_data = []
@@ -339,7 +349,7 @@ try:
                                     'Price': f'${price:.2f}',
                                     '% Change': f'{pct_change}%'
                                 }
-                                for month in month_range:
+                                for i, month in enumerate(month_range):
                                     profit = calculate_option_profit(
                                         current_price=current_price,
                                         strike=strike,
@@ -349,11 +359,11 @@ try:
                                         is_call=False,
                                         target_price=price
                                     )
-                                    row[f'{month}m'] = f'{profit:.1f}%'
+                                    row[month_headers[i]] = f'{profit:.1f}%'
                                 profit_data.append(row)
 
                             profit_df = pd.DataFrame(profit_data)
-                            styled_df = style_profit_table(profit_df)
+                            styled_df = style_profit_table(profit_df, open_interest=open_interest_values)
                             st.dataframe(styled_df, height=400)
 
                 else:
