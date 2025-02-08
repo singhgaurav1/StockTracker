@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-from utils import get_stock_data, get_options_chain, format_price_change, get_expiration_dates
+import numpy as np
+from utils import get_stock_data, get_options_chain, format_price_change, get_expiration_dates, calculate_option_profit
 from datetime import datetime
 
 # Page configuration
@@ -14,6 +15,12 @@ st.set_page_config(
 # Load custom CSS
 with open("styles.css") as f:
     st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+
+# Initialize session state for selected options
+if 'selected_call' not in st.session_state:
+    st.session_state.selected_call = None
+if 'selected_put' not in st.session_state:
+    st.session_state.selected_put = None
 
 # Header
 st.title("📈 Stock & Options Viewer")
@@ -145,11 +152,20 @@ try:
                         st.metric("IV Skew (P-C)", 
                                 f"{iv_skew:.2f}%" if iv_skew != 0 else "N/A")
 
-                    # Options Tables
+                    # Options Tables with selectable rows
                     col1, col2 = st.columns(2)
 
                     with col1:
                         st.markdown("### Calls")
+                        # Make calls table selectable
+                        selected_call_idx = st.selectbox(
+                            "Select Call Option",
+                            options=range(len(calls)),
+                            format_func=lambda x: f"Strike: ${calls.iloc[x]['strike']:.2f} - IV: {calls.iloc[x]['impliedVolatility']:.1f}%",
+                            key="call_selector"
+                        )
+                        st.session_state.selected_call = calls.iloc[selected_call_idx] if selected_call_idx is not None else None
+
                         st.dataframe(
                             calls.style.format({
                                 'strike': '${:.2f}',
@@ -163,6 +179,15 @@ try:
 
                     with col2:
                         st.markdown("### Puts")
+                        # Make puts table selectable
+                        selected_put_idx = st.selectbox(
+                            "Select Put Option",
+                            options=range(len(puts)),
+                            format_func=lambda x: f"Strike: ${puts.iloc[x]['strike']:.2f} - IV: {puts.iloc[x]['impliedVolatility']:.1f}%",
+                            key="put_selector"
+                        )
+                        st.session_state.selected_put = puts.iloc[selected_put_idx] if selected_put_idx is not None else None
+
                         st.dataframe(
                             puts.style.format({
                                 'strike': '${:.2f}',
@@ -173,6 +198,75 @@ try:
                             }),
                             height=400
                         )
+
+                    # Profit Calculator Section
+                    st.subheader("Options Profit Calculator")
+                    calc_col1, calc_col2 = st.columns(2)
+
+                    with calc_col1:
+                        if st.button("Calculate Call Profit/Loss") and st.session_state.selected_call is not None:
+                            option = st.session_state.selected_call
+                            strike = option['strike']
+                            current_price = info['currentPrice']
+                            iv = option['impliedVolatility'] / 100  # Convert from percentage
+                            option_price = option['lastPrice']
+
+                            # Generate price range
+                            price_range = np.linspace(current_price * 0.5, current_price * 1.5, 20)
+                            months = [1, 2, 3, 6]
+
+                            # Calculate profit table
+                            profit_data = []
+                            for price in price_range:
+                                row = {'Price': f'${price:.2f}'}
+                                for month in months:
+                                    profit = calculate_option_profit(
+                                        current_price=current_price,
+                                        strike=strike,
+                                        option_price=option_price,
+                                        volatility=iv,
+                                        time_to_expiry=month/12,
+                                        is_call=True,
+                                        target_price=price
+                                    )
+                                    row[f'{month}m'] = f'{profit:.1f}%'
+                                profit_data.append(row)
+
+                            profit_df = pd.DataFrame(profit_data)
+                            st.dataframe(profit_df, height=400)
+
+                    with calc_col2:
+                        if st.button("Calculate Put Profit/Loss") and st.session_state.selected_put is not None:
+                            option = st.session_state.selected_put
+                            strike = option['strike']
+                            current_price = info['currentPrice']
+                            iv = option['impliedVolatility'] / 100  # Convert from percentage
+                            option_price = option['lastPrice']
+
+                            # Generate price range
+                            price_range = np.linspace(current_price * 0.5, current_price * 1.5, 20)
+                            months = [1, 2, 3, 6]
+
+                            # Calculate profit table
+                            profit_data = []
+                            for price in price_range:
+                                row = {'Price': f'${price:.2f}'}
+                                for month in months:
+                                    profit = calculate_option_profit(
+                                        current_price=current_price,
+                                        strike=strike,
+                                        option_price=option_price,
+                                        volatility=iv,
+                                        time_to_expiry=month/12,
+                                        is_call=False,
+                                        target_price=price
+                                    )
+                                    row[f'{month}m'] = f'{profit:.1f}%'
+                                profit_data.append(row)
+
+                            profit_df = pd.DataFrame(profit_data)
+                            st.dataframe(profit_df, height=400)
+
                 else:
                     st.warning("No options data available for the selected date.")
             else:

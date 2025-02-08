@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import streamlit as st
+from scipy.stats import norm
 
 @st.cache_resource
 def get_ticker(ticker_symbol):
@@ -23,6 +24,47 @@ def calculate_historical_volatility(history, window=30):
     # Calculate rolling standard deviation
     hist_vol = returns.rolling(window=window).std() * np.sqrt(252) * 100
     return hist_vol
+
+def black_scholes(S, K, T, r, sigma, is_call=True):
+    """
+    Calculate option price using Black-Scholes model
+    S: Current stock price
+    K: Strike price
+    T: Time to expiration (in years)
+    r: Risk-free interest rate (assumed 0.05 for simplicity)
+    sigma: Volatility
+    """
+    if T <= 0:
+        # For expired options, calculate intrinsic value
+        if is_call:
+            return max(S - K, 0)
+        else:
+            return max(K - S, 0)
+
+    d1 = (np.log(S/K) + (r + sigma**2/2)*T) / (sigma*np.sqrt(T))
+    d2 = d1 - sigma*np.sqrt(T)
+
+    if is_call:
+        price = S*norm.cdf(d1) - K*np.exp(-r*T)*norm.cdf(d2)
+    else:
+        price = K*np.exp(-r*T)*norm.cdf(-d2) - S*norm.cdf(-d1)
+
+    return price
+
+def calculate_option_profit(current_price, strike, option_price, volatility, 
+                          time_to_expiry, is_call, target_price):
+    """
+    Calculate the profit/loss percentage for an option position
+    """
+    r = 0.05  # Risk-free rate assumption
+
+    # Calculate new option value at target price
+    new_value = black_scholes(target_price, strike, time_to_expiry, r, volatility, is_call)
+
+    # Calculate profit/loss percentage
+    profit = (new_value - option_price) / option_price * 100
+
+    return profit
 
 @st.cache_data(ttl=300)  # Cache data for 5 minutes
 def get_stock_data(ticker_symbol):
