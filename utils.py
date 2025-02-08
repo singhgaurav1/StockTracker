@@ -41,21 +41,31 @@ def get_stock_data(ticker_symbol):
         raise Exception(f"Error fetching data for {ticker_symbol}: {str(e)}")
 
 @st.cache_data(ttl=300)
-def get_options_chain(ticker_symbol):
+def get_expiration_dates(ticker_symbol):
+    """
+    Get available option expiration dates
+    """
+    try:
+        ticker = get_ticker(ticker_symbol)
+        dates = ticker.options
+        # Convert to datetime objects for better display
+        return [datetime.strptime(date, '%Y-%m-%d').date() for date in dates]
+    except Exception as e:
+        raise Exception(f"Error fetching expiration dates: {str(e)}")
+
+@st.cache_data(ttl=300)
+def get_options_chain(ticker_symbol, expiration_date):
     """
     Fetch options chain data with caching
     """
     try:
         ticker = get_ticker(ticker_symbol)
 
-        # Get all available expiration dates
-        expirations = ticker.options
+        # Format date back to string format required by yfinance
+        expiration_str = expiration_date.strftime('%Y-%m-%d')
 
-        if not expirations:
-            return pd.DataFrame(), pd.DataFrame()
-
-        # Get options chain for the nearest expiration
-        options = ticker.option_chain(expirations[0])
+        # Get options chain for the selected expiration
+        options = ticker.option_chain(expiration_str)
 
         # Clean and format calls dataframe
         calls = options.calls[['strike', 'lastPrice', 'bid', 'ask', 'volume', 'openInterest', 'impliedVolatility']]

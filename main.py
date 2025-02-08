@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-from utils import get_stock_data, get_options_chain, format_price_change
+from utils import get_stock_data, get_options_chain, format_price_change, get_expiration_dates
+from datetime import datetime
 
 # Page configuration
 st.set_page_config(
@@ -74,36 +75,52 @@ try:
 
             # Options Chain
             st.subheader("Options Chain")
-            calls, puts = get_options_chain(ticker_symbol)
 
-            if not calls.empty and not puts.empty:
-                col1, col2 = st.columns(2)
+            # Get available expiration dates
+            expiration_dates = get_expiration_dates(ticker_symbol)
 
-                with col1:
-                    st.markdown("### Calls")
-                    st.dataframe(
-                        calls.style.format({
-                            'strike': '${:.2f}',
-                            'lastPrice': '${:.2f}',
-                            'bid': '${:.2f}',
-                            'ask': '${:.2f}',
-                            'impliedVolatility': '{:.2f}%'
-                        }),
-                        height=400
-                    )
+            if expiration_dates:
+                # Add expiration date selector
+                selected_date = st.selectbox(
+                    "Select Expiration Date",
+                    options=expiration_dates,
+                    format_func=lambda x: x.strftime('%Y-%m-%d'),
+                    index=0
+                )
 
-                with col2:
-                    st.markdown("### Puts")
-                    st.dataframe(
-                        puts.style.format({
-                            'strike': '${:.2f}',
-                            'lastPrice': '${:.2f}',
-                            'bid': '${:.2f}',
-                            'ask': '${:.2f}',
-                            'impliedVolatility': '{:.2f}%'
-                        }),
-                        height=400
-                    )
+                # Get options chain for selected date
+                calls, puts = get_options_chain(ticker_symbol, selected_date)
+
+                if not calls.empty and not puts.empty:
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        st.markdown("### Calls")
+                        st.dataframe(
+                            calls.style.format({
+                                'strike': '${:.2f}',
+                                'lastPrice': '${:.2f}',
+                                'bid': '${:.2f}',
+                                'ask': '${:.2f}',
+                                'impliedVolatility': '{:.2f}%'
+                            }),
+                            height=400
+                        )
+
+                    with col2:
+                        st.markdown("### Puts")
+                        st.dataframe(
+                            puts.style.format({
+                                'strike': '${:.2f}',
+                                'lastPrice': '${:.2f}',
+                                'bid': '${:.2f}',
+                                'ask': '${:.2f}',
+                                'impliedVolatility': '{:.2f}%'
+                            }),
+                            height=400
+                        )
+                else:
+                    st.warning("No options data available for the selected date.")
             else:
                 st.warning("No options data available for this ticker.")
 
