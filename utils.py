@@ -212,7 +212,13 @@ def get_options_chain(ticker_symbol, expiration_date):
 
         # Get options chain for the selected expiration
         options = ticker.option_chain(expiration_str)
-        current_price = ticker.info['currentPrice']
+        
+        # Get current price with fallback options
+        current_price = (
+            ticker.info.get('currentPrice') or 
+            ticker.info.get('regularMarketPrice') or 
+            ticker.history(period='1d')['Close'].iloc[-1]
+        )
 
         # Clean and format calls dataframe
         calls = options.calls[['strike', 'lastPrice', 'bid', 'ask', 'volume', 'openInterest', 'impliedVolatility']]
