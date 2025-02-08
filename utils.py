@@ -150,7 +150,8 @@ def get_stock_data(ticker_symbol):
     try:
         ticker = get_ticker(ticker_symbol)
 
-        # Get latest price from history if needed
+        # Get history first
+        history = ticker.history(period="1y")
         latest_close = history['Close'].iloc[-1] if not history.empty else 0.0
         
         # Get info and convert to dict
