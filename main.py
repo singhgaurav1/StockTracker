@@ -69,21 +69,9 @@ try:
             # Volatility Metrics
             st.subheader("Volatility Analysis")
 
-            # Add price range controls
+            # Set default price range
             current_price = info['currentPrice']
-            min_price = current_price * 0.5
-            max_price = current_price * 1.5
-
-            st.markdown("### Price Range Selection")
-            price_range = st.slider(
-                "Select price range for volatility analysis",
-                min_value=float(min_price),
-                max_value=float(max_price),
-                value=(float(current_price * 0.8), float(current_price * 1.2)),
-                step=float(current_price * 0.01),
-                format="$%.2f",
-                key="price_range_slider"
-            )
+            price_range = (current_price * 0.8, current_price * 1.2)
             st.session_state.price_range = price_range
 
             vol_col1, vol_col2 = st.columns(2)
