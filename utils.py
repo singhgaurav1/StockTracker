@@ -1,0 +1,62 @@
+import yfinance as yf
+import pandas as pd
+from datetime import datetime, timedelta
+import streamlit as st
+
+@st.cache_data(ttl=300)  # Cache data for 5 minutes
+def get_stock_data(ticker_symbol):
+    """
+    Fetch stock data using yfinance with caching
+    """
+    try:
+        ticker = yf.Ticker(ticker_symbol)
+        info = ticker.info
+        history = ticker.history(period="1y")
+        return ticker, info, history
+    except Exception as e:
+        raise Exception(f"Error fetching data for {ticker_symbol}: {str(e)}")
+
+@st.cache_data(ttl=300)
+def get_options_chain(ticker):
+    """
+    Fetch options chain data with caching
+    """
+    try:
+        # Get all available expiration dates
+        expirations = ticker.options
+        
+        if not expirations:
+            return pd.DataFrame(), pd.DataFrame()
+            
+        # Get options chain for the nearest expiration
+        options = ticker.option_chain(expirations[0])
+        
+        # Clean and format calls dataframe
+        calls = options.calls[['strike', 'lastPrice', 'bid', 'ask', 'volume', 'openInterest', 'impliedVolatility']]
+        calls = calls.round(2)
+        calls['impliedVolatility'] = (calls['impliedVolatility'] * 100).round(2)
+        
+        # Clean and format puts dataframe
+        puts = options.puts[['strike', 'lastPrice', 'bid', 'ask', 'volume', 'openInterest', 'impliedVolatility']]
+        puts = puts.round(2)
+        puts['impliedVolatility'] = (puts['impliedVolatility'] * 100).round(2)
+        
+        return calls, puts
+    except Exception as e:
+        raise Exception(f"Error fetching options data: {str(e)}")
+
+def format_price_change(change, percentage=False):
+    """
+    Format price change with color coding
+    """
+    if percentage:
+        formatted = f"{change:.2f}%"
+    else:
+        formatted = f"${change:.2f}"
+        
+    if change > 0:
+        return f"<span class='price-change-positive'>+{formatted}</span>"
+    elif change < 0:
+        return f"<span class='price-change-negative'>{formatted}</span>"
+    return formatted
+
