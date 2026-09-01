@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev --ip 0.0.0.0 --port 5000",
-    "deploy": "wrangler deploy --temporary",
+    "deploy": "wrangler deploy",
     "types": "wrangler types",
     "test": "node --test test/calc.test.mjs"
   },
