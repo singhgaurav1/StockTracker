@@ -56,15 +56,17 @@
               <button type="button" data-period="1y">1Y</button>
             </div>
           </div>
-          <div id="price-chart" class="chart chart-compact" aria-hidden="true"></div>
-          <p id="chart-caption" class="chart-caption"></p>
+          <div class="chart-block">
+            <div id="price-chart" class="chart chart-compact" aria-hidden="true"></div>
+            <p id="chart-caption" class="chart-caption"></p>
+          </div>
           <dl class="stats stats-inline" id="stock-stats"></dl>
         </article>
 
         <article class="trade-card">
           <div class="trade-controls">
             <label class="field compact-field">
-              <span>Expiration</span>
+              <span class="section-title">Expiration</span>
               <select id="expiry-select"></select>
             </label>
             <div class="segmented mini" role="tablist" aria-label="Option type">
@@ -73,7 +75,7 @@
             </div>
           </div>
           <div class="chain-head">
-            <span>Option chain</span>
+            <span class="section-title">Option chain</span>
           </div>
           <div class="chain-scroll">
             <table class="chain-table" id="chain-table" aria-label="Option chain">

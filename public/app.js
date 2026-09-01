@@ -90,7 +90,50 @@ const state = {
   term: [],
   heatmap: null,
   view: "pick",
+  restoring: false,
 };
+
+const CHART_PLOT_HEIGHT = () => (window.innerWidth < 720 ? 88 : 120);
+const Y_AXIS_WIDTH = 42;
+
+function urlParams() {
+  return new URLSearchParams(location.search);
+}
+
+function buildShareUrl() {
+  if (!state.ticker) return location.pathname;
+  const params = new URLSearchParams();
+  params.set("symbol", state.ticker);
+  if (state.selectedExpiry) params.set("expiry", state.selectedExpiry);
+  if (state.right) params.set("type", state.right);
+  if (state.selectedStrike != null) params.set("strike", String(state.selectedStrike));
+  if (state.period !== "3m") params.set("period", state.period);
+  if (state.chart !== "price") params.set("chart", state.chart);
+  if (state.view === "results" && state.heatmap) {
+    params.set("pnl", "1");
+    if (state.strikeMin != null) params.set("min", String(state.strikeMin));
+    if (state.strikeMax != null) params.set("max", String(state.strikeMax));
+    if (state.display !== "multiple") params.set("mode", state.display);
+  }
+  const qs = params.toString();
+  return qs ? `${location.pathname}?${qs}` : location.pathname;
+}
+
+function syncUrl({ push = true, replace = false } = {}) {
+  if (state.restoring) return;
+  const url = state.view === "pick" && !state.ticker ? location.pathname : buildShareUrl();
+  const snapshot = {
+    view: state.view,
+    ticker: state.ticker,
+    expiry: state.selectedExpiry,
+    right: state.right,
+    strike: state.selectedStrike,
+    pnl: state.view === "results",
+  };
+  if (replace) history.replaceState(snapshot, "", url);
+  else if (push) history.pushState(snapshot, "", url);
+  else history.replaceState(snapshot, "", url);
+}
 
 function showView(name, { push = true } = {}) {
   state.view = name;
@@ -98,10 +141,7 @@ function showView(name, { push = true } = {}) {
   els.trade.hidden = name !== "trade";
   els.results.hidden = name !== "results";
   document.body.dataset.view = name;
-  if (push) {
-    const url = name === "pick" ? `${location.pathname}${location.search}` : `#${name}`;
-    history.pushState({ view: name }, "", url);
-  }
+  if (push) syncUrl({ push: true });
   updateBottomBar();
 }
 
@@ -110,18 +150,88 @@ function goBack() {
     history.back();
     return;
   }
-  if (state.view === "results") showView("trade", { push: false });
-  else if (state.view === "trade") showView("pick", { push: false });
+  if (state.view === "results") {
+    showView("trade", { push: false });
+    syncUrl({ replace: true });
+  } else if (state.view === "trade") {
+    state.ticker = "";
+    showView("pick", { push: false });
+    history.replaceState({ view: "pick" }, "", location.pathname);
+  }
 }
 
-window.addEventListener("popstate", (event) => {
-  const view = event.state?.view ?? "pick";
-  showView(view, { push: false });
+window.addEventListener("popstate", () => {
+  restoreFromUrl({ push: false });
 });
 
-history.replaceState({ view: "pick" }, "", `${location.pathname}${location.search}`);
-if (location.hash === "#trade") showView("trade", { push: false });
-else if (location.hash === "#results") showView("results", { push: false });
+async function restoreFromUrl({ push = false } = {}) {
+  const params = urlParams();
+  const symbol = (params.get("symbol") || params.get("ticker") || "").trim().toUpperCase();
+  const pnl = params.get("pnl") === "1";
+
+  if (!symbol) {
+    state.restoring = true;
+    showView("pick", { push: false });
+    state.restoring = false;
+    history.replaceState({ view: "pick" }, "", location.pathname);
+    return;
+  }
+
+  const expiry = params.get("expiry") || undefined;
+  const right = params.get("type") === "put" ? "put" : "call";
+  const strike = params.get("strike") ? Number(params.get("strike")) : null;
+  const period = params.get("period");
+  const chart = params.get("chart");
+  const mode = params.get("mode");
+
+  if (period && ["1m", "3m", "6m", "1y"].includes(period)) {
+    state.period = period;
+    [...els.periods.querySelectorAll("button")].forEach((node) => {
+      node.classList.toggle("active", node.dataset.period === period);
+    });
+  }
+  if (chart === "iv" || chart === "price") {
+    state.chart = chart;
+    [...els.chartToggle.querySelectorAll("button")].forEach((node) => {
+      node.classList.toggle("active", node.dataset.chart === chart);
+    });
+  }
+  if (mode === "pct" || mode === "multiple") {
+    state.display = mode;
+    els.modeMultiple.classList.toggle("active", mode === "multiple");
+    els.modePct.classList.toggle("active", mode === "pct");
+  }
+
+  state.restoring = true;
+  const sameTicker = state.ticker === symbol && state.info;
+  try {
+    if (!sameTicker) {
+      await loadTicker(symbol, { expiry, right, strike, pushUrl: false });
+    } else {
+      if (expiry && state.expirations.includes(expiry)) state.selectedExpiry = expiry;
+      state.right = right;
+      renderType();
+      await loadChain();
+      if (strike != null && currentOptions().some((row) => row.strike === strike)) {
+        state.selectedStrike = strike;
+        renderStrikes();
+      }
+    }
+
+    if (pnl && state.selectedStrike != null) {
+      const min = params.get("min") ? Number(params.get("min")) : null;
+      const max = params.get("max") ? Number(params.get("max")) : null;
+      await calculate({ strikeMin: min, strikeMax: max, pushUrl: false });
+    } else {
+      showView("trade", { push: false });
+    }
+  } catch {
+    showView("pick", { push: false });
+  } finally {
+    state.restoring = false;
+    if (!push) syncUrl({ replace: true });
+  }
+}
 
 function toast(message) {
   els.status.hidden = !message;
@@ -193,7 +303,16 @@ function currentAtmIv() {
 }
 
 function chartHeight() {
-  return window.innerWidth < 720 ? 88 : 120;
+  return CHART_PLOT_HEIGHT();
+}
+
+function formatChartDate(isoDate) {
+  return new Date(`${isoDate}T00:00:00Z`).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
 }
 
 function renderChart() {
@@ -201,87 +320,161 @@ function renderChart() {
   else renderPriceChart();
 }
 
-function renderPriceChart() {
-  const bars = filterHistory();
-  const width = Math.max(els.chart.clientWidth || 320, 280);
+function renderInteractiveChart({
+  points,
+  color,
+  formatValue,
+  emptyText = "Not enough data yet.",
+  extras = [],
+}) {
   const height = chartHeight();
+  const plotWidth = Math.max((els.chart.clientWidth || 320) - Y_AXIS_WIDTH - 4, 180);
   els.chartCaption.textContent = "";
-  if (bars.length < 2) {
-    els.chart.innerHTML = "";
+
+  if (points.length < 2) {
+    els.chart.innerHTML = `
+      <div class="chart-yaxis" aria-hidden="true"></div>
+      <div class="chart-plot"><div class="chart-empty">${emptyText}</div></div>
+    `;
     return;
   }
-  const closes = bars.map((bar) => bar.close);
-  const min = Math.min(...closes);
-  const max = Math.max(...closes);
-  const span = max - min || 1;
-  const coords = closes.map((close, index) => {
-    const x = (index / (closes.length - 1)) * width;
-    const y = height - 8 - ((close - min) / span) * (height - 16);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
+
+  const values = points.map((point) => point.value);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const pad = Math.max((max - min) * 0.08, formatValue === formatIvValue ? 1 : (max - min) * 0.02 || 0.5);
+  const lo = formatValue === formatIvValue ? Math.max(0, min - pad) : min - pad;
+  const hi = max + pad;
+  const span = hi - lo || 1;
+  const yOf = (value) => height - 8 - ((value - lo) / span) * (height - 16);
+  const coords = points.map((point, index) => {
+    const x = (index / (points.length - 1)) * plotWidth;
+    return { x, y: yOf(point.value), point };
   });
-  const line = `M${coords.join(" L")}`;
-  const area = `${line} L${width},${height} L0,${height} Z`;
+  const line = `M${coords.map((coord) => `${coord.x.toFixed(1)},${coord.y.toFixed(1)}`).join(" L")}`;
+  const area = `${line} L${plotWidth},${height} L0,${height} Z`;
+  const yLabels = [hi, (hi + lo) / 2, lo].map((value) => formatValue(value));
+
+  const extraSvg = extras.map((extra) => `
+    <line x1="0" x2="${plotWidth}" y1="${yOf(extra.value).toFixed(1)}" y2="${yOf(extra.value).toFixed(1)}"
+      stroke="${extra.color}" stroke-width="1.5" stroke-dasharray="5 4" vector-effect="non-scaling-stroke" />
+  `).join("");
+
+  els.chart.innerHTML = `
+    <div class="chart-yaxis" aria-hidden="true">
+      <span>${yLabels[0]}</span>
+      <span>${yLabels[1]}</span>
+      <span>${yLabels[2]}</span>
+    </div>
+    <div class="chart-plot" data-chart-interactive="true">
+      <svg viewBox="0 0 ${plotWidth} ${height}" preserveAspectRatio="none" role="img" aria-label="Chart">
+        <defs>
+          <linearGradient id="chart-fill" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stop-color="${color}" stop-opacity="0.35" />
+            <stop offset="100%" stop-color="${color}" stop-opacity="0.02" />
+          </linearGradient>
+        </defs>
+        <path d="${area}" fill="url(#chart-fill)"></path>
+        <path d="${line}" fill="none" stroke="${color}" stroke-width="2" vector-effect="non-scaling-stroke"></path>
+        ${extraSvg}
+      </svg>
+      <div class="chart-crosshair" hidden></div>
+      <div class="chart-dot" hidden></div>
+      <div class="chart-tooltip" hidden></div>
+    </div>
+  `;
+
+  bindChartInteraction(els.chart.querySelector(".chart-plot"), coords, formatValue);
+}
+
+function formatPriceValue(value) {
+  return value >= 100 ? `$${value.toFixed(0)}` : `$${value.toFixed(2)}`;
+}
+
+function formatIvValue(value) {
+  return `${value.toFixed(1)}%`;
+}
+
+function bindChartInteraction(plot, coords, formatValue) {
+  const crosshair = plot.querySelector(".chart-crosshair");
+  const dot = plot.querySelector(".chart-dot");
+  const tooltip = plot.querySelector(".chart-tooltip");
+  const lineColor = plot.querySelector('path[stroke]')?.getAttribute("stroke") || "#5b8cff";
+
+  const showAt = (clientX) => {
+    const rect = plot.getBoundingClientRect();
+    const x = Math.max(0, Math.min(clientX - rect.left, rect.width));
+    const ratio = rect.width > 0 ? x / rect.width : 0;
+    const index = Math.round(ratio * (coords.length - 1));
+    const coord = coords[index];
+    if (!coord) return;
+    const leftPct = (coord.x / (coords[coords.length - 1].x || 1)) * 100;
+    crosshair.hidden = false;
+    crosshair.style.left = `${leftPct}%`;
+    dot.hidden = false;
+    dot.style.left = `${leftPct}%`;
+    dot.style.top = `${(coord.y / chartHeight()) * 100}%`;
+    dot.style.background = lineColor;
+    tooltip.hidden = false;
+    tooltip.innerHTML = `<strong>${formatChartDate(coord.point.date)}</strong>${formatValue(coord.point.value)}`;
+    const flip = leftPct > 72;
+    tooltip.style.left = flip ? "auto" : "50%";
+    tooltip.style.right = flip ? "0" : "auto";
+    tooltip.style.transform = flip ? "none" : "translateX(-50%)";
+  };
+
+  const hide = () => {
+    crosshair.hidden = true;
+    dot.hidden = true;
+    tooltip.hidden = true;
+  };
+
+  plot.addEventListener("pointerdown", (event) => {
+    plot.setPointerCapture(event.pointerId);
+    showAt(event.clientX);
+  });
+  plot.addEventListener("pointermove", (event) => {
+    if (plot.hasPointerCapture(event.pointerId) || event.pointerType === "mouse") {
+      showAt(event.clientX);
+    }
+  });
+  plot.addEventListener("pointerup", (event) => {
+    if (plot.hasPointerCapture(event.pointerId)) plot.releasePointerCapture(event.pointerId);
+    if (event.pointerType !== "mouse") hide();
+  });
+  plot.addEventListener("pointerleave", () => {
+    if (!plot.querySelector(":active")) hide();
+  });
+}
+
+function renderPriceChart() {
+  const bars = filterHistory();
   const up = (state.info?.currentPrice ?? 0) >= (state.info?.previousClose ?? 0);
   const color = up ? "#3ddc91" : "#ff6b6b";
-  els.chart.innerHTML = `
-    <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Price chart">
-      <defs>
-        <linearGradient id="fill" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stop-color="${color}" stop-opacity="0.35" />
-          <stop offset="100%" stop-color="${color}" stop-opacity="0.02" />
-        </linearGradient>
-      </defs>
-      <path d="${area}" fill="url(#fill)"></path>
-      <path d="${line}" fill="none" stroke="${color}" stroke-width="2" vector-effect="non-scaling-stroke"></path>
-    </svg>
-  `;
+  renderInteractiveChart({
+    points: bars.map((bar) => ({ date: bar.date, value: bar.close })),
+    color,
+    formatValue: formatPriceValue,
+    emptyText: "Not enough price history yet.",
+  });
 }
 
 function renderIvChart() {
   const bars = filterHistory().filter((bar) => bar.historicalVolatility != null);
-  const width = Math.max(els.chart.clientWidth || 320, 280);
-  const height = chartHeight();
   const atmIv = currentAtmIv();
   const hvNow = bars.length ? bars[bars.length - 1].historicalVolatility : null;
   els.chartCaption.textContent = [
     hvNow != null ? `HV ${hvNow.toFixed(1)}%` : null,
     atmIv != null ? `ATM IV ${atmIv.toFixed(1)}%` : null,
   ].filter(Boolean).join(" · ");
-  if (bars.length < 2) {
-    els.chart.innerHTML = `<p class="chain-empty">Not enough history yet.</p>`;
-    return;
-  }
-  const values = bars.map((bar) => bar.historicalVolatility);
-  if (atmIv != null) values.push(atmIv);
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const pad = Math.max((max - min) * 0.12, 1);
-  const lo = Math.max(0, min - pad);
-  const hi = max + pad;
-  const span = hi - lo || 1;
-  const yOf = (value) => height - 10 - ((value - lo) / span) * (height - 20);
-  const coords = bars.map((bar, index) => {
-    const x = (index / (bars.length - 1)) * width;
-    return `${x.toFixed(1)},${yOf(bar.historicalVolatility).toFixed(1)}`;
+  const extras = atmIv != null ? [{ value: atmIv, color: "#f0c35b" }] : [];
+  renderInteractiveChart({
+    points: bars.map((bar) => ({ date: bar.date, value: bar.historicalVolatility })),
+    color: "#b7adff",
+    formatValue: formatIvValue,
+    emptyText: "Not enough history yet.",
+    extras,
   });
-  const line = `M${coords.join(" L")}`;
-  const area = `${line} L${width},${height} L0,${height} Z`;
-  const atmLine = atmIv != null ? `
-    <line x1="0" x2="${width}" y1="${yOf(atmIv).toFixed(1)}" y2="${yOf(atmIv).toFixed(1)}" stroke="#f0c35b" stroke-width="1.5" stroke-dasharray="5 4" vector-effect="non-scaling-stroke" />
-  ` : "";
-  els.chart.innerHTML = `
-    <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Historical implied volatility">
-      <defs>
-        <linearGradient id="iv-fill" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stop-color="#8b7cff" stop-opacity="0.38" />
-          <stop offset="100%" stop-color="#8b7cff" stop-opacity="0.03" />
-        </linearGradient>
-      </defs>
-      <path d="${area}" fill="url(#iv-fill)"></path>
-      <path d="${line}" fill="none" stroke="#b7adff" stroke-width="2" vector-effect="non-scaling-stroke"></path>
-      ${atmLine}
-    </svg>
-  `;
 }
 
 function stat(label, value) {
@@ -317,6 +510,7 @@ function expiryLabel(date) {
   const pretty = new Date(`${date}T00:00:00Z`).toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
+    year: "numeric",
     timeZone: "UTC",
   });
   return `${pretty} · ${dte}d`;
@@ -427,7 +621,7 @@ function typicalStrikeStep() {
   return step >= 1 ? step : 0.5;
 }
 
-function setStrikeWindow(minStrike, maxStrike, { rebuild = true } = {}) {
+function setStrikeWindow(minStrike, maxStrike, { rebuild = true, sync = true } = {}) {
   const lo = Math.min(minStrike, maxStrike);
   const hi = Math.max(minStrike, maxStrike);
   state.strikeMin = Calc.clamp(lo, state.chainMin, state.chainMax);
@@ -438,6 +632,7 @@ function setStrikeWindow(minStrike, maxStrike, { rebuild = true } = {}) {
   }
   syncStrikeWindowInputs();
   if (rebuild) rebuildHeatmap();
+  if (sync) syncUrl({ push: false, replace: true });
 }
 
 function initStrikeWindow(option) {
@@ -520,7 +715,7 @@ function rebuildHeatmap() {
   renderHeatmap();
 }
 
-async function loadTicker(ticker) {
+async function loadTicker(ticker, { expiry, right, strike, pushUrl = true } = {}) {
   const symbol = ticker.trim().toUpperCase();
   if (!symbol) return;
   els.lookup.disabled = true;
@@ -536,14 +731,16 @@ async function loadTicker(ticker) {
     state.info = stock.info;
     state.history = stock.history ?? [];
     state.expirations = expirationsPayload.expirationDates ?? [];
-    state.selectedExpiry = pickDefaultExpiry(state.expirations);
-    state.selectedStrike = null;
+    if (expiry && state.expirations.includes(expiry)) state.selectedExpiry = expiry;
+    else state.selectedExpiry = pickDefaultExpiry(state.expirations);
+    if (right === "put" || right === "call") state.right = right;
+    state.selectedStrike = strike ?? null;
     state.heatmap = null;
     els.input.value = symbol;
     renderQuote();
     renderExpiries();
     renderType();
-    showView("trade");
+    showView("trade", { push: false });
     if (!state.selectedExpiry) {
       setBanner(els.tradeError, "No options are listed for this ticker.");
       els.chainTable.querySelector("thead").innerHTML = "";
@@ -551,7 +748,12 @@ async function loadTicker(ticker) {
       return;
     }
     await loadChain();
+    if (strike != null && currentOptions().some((row) => row.strike === strike)) {
+      state.selectedStrike = strike;
+      renderStrikes();
+    }
     setBanner(els.tradeError, "");
+    if (pushUrl) syncUrl({ replace: true });
   } catch (error) {
     setBanner(els.pickError, error.message);
     showView("pick", { push: false });
@@ -576,7 +778,7 @@ async function loadChain() {
   toast("");
 }
 
-async function calculate() {
+async function calculate({ strikeMin = null, strikeMax = null, pushUrl = true } = {}) {
   const option = selectedOption();
   if (!option) {
     setBanner(els.tradeError, "Select a call or put strike first.");
@@ -594,8 +796,12 @@ async function calculate() {
     );
     state.term = payload.term ?? [];
     initStrikeWindow(option);
+    if (strikeMin != null && strikeMax != null && strikeMin < strikeMax) {
+      setStrikeWindow(strikeMin, strikeMax, { rebuild: false, sync: false });
+    }
     rebuildHeatmap();
-    showView("results");
+    showView("results", { push: false });
+    if (pushUrl) syncUrl({ push: true });
     setBanner(els.tradeError, "");
   } catch (error) {
     setBanner(els.tradeError, error.message);
@@ -635,6 +841,7 @@ els.periods.addEventListener("click", (event) => {
   state.period = button.dataset.period;
   [...els.periods.querySelectorAll("button")].forEach((node) => node.classList.toggle("active", node === button));
   renderChart();
+  syncUrl({ replace: true });
 });
 
 els.expiry.addEventListener("change", async () => {
@@ -642,6 +849,7 @@ els.expiry.addEventListener("change", async () => {
   state.selectedStrike = null;
   try {
     await loadChain();
+    syncUrl({ replace: true });
   } catch (error) {
     setBanner(els.tradeError, error.message);
   }
@@ -652,6 +860,7 @@ els.typeCall.addEventListener("click", () => {
   renderType();
   renderQuote();
   renderStrikes();
+  syncUrl({ replace: true });
 });
 
 els.typePut.addEventListener("click", () => {
@@ -659,6 +868,7 @@ els.typePut.addEventListener("click", () => {
   renderType();
   renderQuote();
   renderStrikes();
+  syncUrl({ replace: true });
 });
 
 els.chartToggle.addEventListener("click", (event) => {
@@ -667,6 +877,7 @@ els.chartToggle.addEventListener("click", (event) => {
   state.chart = button.dataset.chart;
   [...els.chartToggle.querySelectorAll("button")].forEach((node) => node.classList.toggle("active", node === button));
   renderChart();
+  syncUrl({ replace: true });
 });
 
 els.chainTable.addEventListener("click", (event) => {
@@ -698,11 +909,12 @@ els.chainTable.addEventListener("keydown", (event) => {
   }
 });
 
-function selectStrike(strike, { focus = false } = {}) {
+function selectStrike(strike, { focus = false, sync = true } = {}) {
   if (!Number.isFinite(strike)) return;
   state.selectedStrike = strike;
   renderStrikes();
   if (focus) els.chainTable.querySelector("tr.selected")?.focus();
+  if (sync) syncUrl({ replace: true });
 }
 
 els.calculate.addEventListener("click", calculate);
@@ -732,6 +944,7 @@ els.modeMultiple.addEventListener("click", () => {
   els.modeMultiple.classList.add("active");
   els.modePct.classList.remove("active");
   renderHeatmap();
+  syncUrl({ replace: true });
 });
 
 els.modePct.addEventListener("click", () => {
@@ -739,6 +952,7 @@ els.modePct.addEventListener("click", () => {
   els.modePct.classList.add("active");
   els.modeMultiple.classList.remove("active");
   renderHeatmap();
+  syncUrl({ replace: true });
 });
 
 els.helpClose.addEventListener("click", () => els.helpModal.close());
@@ -750,3 +964,5 @@ window.addEventListener("resize", () => {
   if (!els.trade.hidden) renderChart();
   if (!els.results.hidden) rebuildHeatmap();
 });
+
+restoreFromUrl({ push: false });
