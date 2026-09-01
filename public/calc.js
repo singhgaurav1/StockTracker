@@ -60,19 +60,17 @@ export function defaultStrikeWindow(spot, strikes, ivPct, years, selectedStrike)
   const oneSigmaPct = iv * Math.sqrt(tenor) * 100;
   const halfWindow = clamp(oneSigmaPct * 1.75, 15, 55);
   const unique = [...new Set((strikes ?? []).filter((s) => s > 0))].sort((a, b) => a - b);
-  const chainMin = unique[0] ?? spot * (1 - halfWindow / 100);
-  const chainMax = unique[unique.length - 1] ?? spot * (1 + halfWindow / 100);
-  let minStrike = spot * (1 - halfWindow / 100);
-  let maxStrike = spot * (1 + halfWindow / 100);
+  const listedMin = unique[0] ?? spot * (1 - halfWindow / 100);
+  const listedMax = unique[unique.length - 1] ?? spot * 2;
+  let minStrike = Math.min(listedMin, spot * (1 - halfWindow / 100));
+  let maxStrike = spot * 4;
   if (selectedStrike) {
     minStrike = Math.min(minStrike, selectedStrike * 0.92);
     maxStrike = Math.max(maxStrike, selectedStrike * 1.08);
   }
-  minStrike = clamp(minStrike, chainMin, chainMax);
-  maxStrike = clamp(maxStrike, chainMin, chainMax);
   if (minStrike > maxStrike) [minStrike, maxStrike] = [maxStrike, minStrike];
-  const chainLo = snapToStep(chainMin, 5, "floor");
-  const chainHi = Math.max(chainLo + 5, snapToStep(chainMax, 5, "ceil"));
+  const chainLo = snapToStep(Math.min(listedMin, minStrike), 5, "floor");
+  const chainHi = snapToStep(Math.max(listedMax, maxStrike), 5, "ceil");
   const windowMin = clamp(snapToStep(minStrike, 5, "round"), chainLo, chainHi);
   const windowMax = clamp(Math.max(windowMin + 5, snapToStep(maxStrike, 5, "round")), chainLo, chainHi);
   return {
@@ -272,25 +270,25 @@ export function buildPriceRows({ spot, strikes, strikeMin, strikeMax, maxRows, s
   const step = typicalStep(unique);
   let levels = unique.filter((strike) => strike >= lo && strike <= hi);
 
-  const extras = [selectedStrike, unique[nearestIndex(unique, spot)]].filter((value) => Number.isFinite(value) && value > 0);
+  const extras = [selectedStrike, spot, unique[nearestIndex(unique, spot)]].filter((value) => Number.isFinite(value) && value > 0);
   for (const extra of extras) {
     if (extra >= lo && extra <= hi && !levels.includes(extra)) levels.push(extra);
   }
 
-  if (levels.length < 5) {
-    const synthetic = [];
-    const usedStep = step || niceStep((hi - lo) / Math.max(maxRows - 1, 1));
-    const start = Math.max(usedStep, Math.floor(lo / usedStep) * usedStep);
-    for (let price = start; price <= hi + usedStep / 4; price = roundTo(price + usedStep, 4)) {
-      if (price > 0) synthetic.push(roundTo(price, 2));
-    }
-    levels = [...new Set([...levels, ...synthetic])].sort((a, b) => a - b);
-    levels = levels.filter((price) => price >= lo * 0.98 && price <= hi * 1.02);
+  const usedStep = niceStep((hi - lo) / Math.max(maxRows - 1, 1)) || step || 5;
+  const synthetic = [];
+  const start = Math.max(usedStep, Math.floor(lo / usedStep) * usedStep);
+  for (let price = start; price <= hi + usedStep / 4; price = roundTo(price + usedStep, 4)) {
+    if (price > 0) synthetic.push(roundTo(price, 2));
   }
+  levels = [...new Set([...levels, ...synthetic])].sort((a, b) => a - b);
+  levels = levels.filter((price) => price >= lo * 0.98 && price <= hi * 1.02);
 
   levels.sort((a, b) => a - b);
   if (levels.length > maxRows) {
     const keep = new Set(extras.filter((v) => v >= lo && v <= hi));
+    keep.add(levels[0]);
+    keep.add(levels[levels.length - 1]);
     const remainingSlots = Math.max(3, maxRows - keep.size);
     const others = levels.filter((price) => !keep.has(price));
     const picked = [];

@@ -2,6 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as Calc from "../public/calc.js";
 
+test("default strike window max is 4x spot even when the chain is narrower", () => {
+  const window = Calc.defaultStrikeWindow(100, [80, 90, 100, 110, 120], 30, 0.05, 100);
+  assert.equal(window.maxStrike, 400);
+  assert.equal(window.chainMax >= 400, true);
+});
+
 test("default strike window uses integers", () => {
   const window = Calc.defaultStrikeWindow(325.67, [300, 305, 310, 320, 330, 350], 30, 0.05, 320);
   assert.equal(Number.isInteger(window.minStrike), true);
@@ -91,6 +97,25 @@ test("heatmap rows stay within the requested strike window", () => {
   assert.equal(grid.columns.every((column) => column.ivPct != null), true);
   assert.equal(grid.cells[0].length, grid.columns.length);
   assert.equal(grid.premium > 0, true);
+});
+
+test("heatmap covers prices beyond listed strikes up to the window max", () => {
+  const option = { strike: 100, lastPrice: 4, bid: 3.8, ask: 4.2, impliedVolatility: 30 };
+  const grid = Calc.buildHeatmap({
+    spot: 100,
+    option,
+    isCall: true,
+    expiry: "2026-10-16",
+    today: "2026-09-01",
+    term: [{ date: "2026-10-16", iv: 30, atmIv: 27 }],
+    strikeMin: 50,
+    strikeMax: 400,
+    maxRows: 12,
+    maxCols: 4,
+    strikes: [80, 90, 100, 110, 120],
+  });
+  assert.equal(Math.max(...grid.rows) >= 380, true);
+  assert.equal(Math.min(...grid.rows) <= 60, true);
 });
 
 test("bar widths scale to the chain maximum", () => {

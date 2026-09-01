@@ -616,14 +616,16 @@ function syncStrikeWindowInputs() {
 }
 
 function setStrikeWindow(minStrike, maxStrike, { rebuild = true, sync = true } = {}) {
-  const lo = Calc.snapToStep(Math.min(minStrike, maxStrike), 5, "round");
-  const hi = Calc.snapToStep(Math.max(minStrike, maxStrike), 5, "round");
-  state.strikeMin = Calc.clamp(lo, state.chainMin, state.chainMax);
-  state.strikeMax = Calc.clamp(hi, state.chainMin, state.chainMax);
-  if (state.strikeMin > state.strikeMax) {
-    state.strikeMin = state.chainMin;
-    state.strikeMax = state.chainMax;
-  }
+  const spot = state.info?.currentPrice ?? 0;
+  const hardMax = Calc.snapToStep(Math.max(spot * 20, state.chainMax || 0, 5), 5, "ceil");
+  let lo = Calc.snapToStep(Math.min(minStrike, maxStrike), 5, "round");
+  let hi = Calc.snapToStep(Math.max(minStrike, maxStrike), 5, "round");
+  lo = Math.max(5, lo);
+  hi = Math.min(hardMax, Math.max(lo + 5, hi));
+  if (lo < state.chainMin) state.chainMin = lo;
+  if (hi > state.chainMax) state.chainMax = hi;
+  state.strikeMin = lo;
+  state.strikeMax = hi;
   syncStrikeWindowInputs();
   if (rebuild) rebuildHeatmap();
   if (sync) syncUrl({ push: false, replace: true });
