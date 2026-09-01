@@ -612,6 +612,11 @@ function syncStrikeWindowInputs() {
   els.strikeMaxRange.step = typicalStrikeStep();
   els.strikeMinRange.value = state.strikeMin;
   els.strikeMaxRange.value = state.strikeMax;
+  const span = state.chainMax - state.chainMin || 1;
+  const minPosition = ((state.strikeMin - state.chainMin) / span) * 100;
+  const maxPosition = ((state.strikeMax - state.chainMin) / span) * 100;
+  els.strikeMinRange.parentElement.style.setProperty("--min-position", `${minPosition}%`);
+  els.strikeMinRange.parentElement.style.setProperty("--max-position", `${maxPosition}%`);
 }
 
 function typicalStrikeStep() {

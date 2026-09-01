@@ -89,24 +89,25 @@
 
       <section id="view-results" class="view view-results" hidden>
         <header class="results-bar">
-          <button type="button" class="text-btn" id="back-trade">Edit</button>
           <div class="results-summary">
             <strong id="result-title"></strong>
             <span id="result-sub"></span>
           </div>
+          <button type="button" class="text-btn" id="back-trade">Edit</button>
         </header>
         <div class="controls">
           <div class="strike-window">
             <label class="strike-input">
-              <span>Min strike</span>
+              <span>Min</span>
               <input id="strike-min-input" type="number" inputmode="decimal" step="0.5" />
             </label>
-            <div class="strike-slider">
+            <div class="strike-slider" aria-label="Strike price window">
+              <span class="strike-slider-label">Strike window</span>
               <input id="strike-min-range" type="range" />
               <input id="strike-max-range" type="range" />
             </div>
             <label class="strike-input">
-              <span>Max strike</span>
+              <span>Max</span>
               <input id="strike-max-input" type="number" inputmode="decimal" step="0.5" />
             </label>
           </div>
