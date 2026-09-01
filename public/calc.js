@@ -347,6 +347,17 @@ export function compactNumber(value) {
   return n.toLocaleString();
 }
 
+export function barWidthPct(value, max, minVisible = 4) {
+  const n = Number(value) || 0;
+  const cap = Number(max) || 0;
+  if (n <= 0 || cap <= 0) return 0;
+  return Math.max(minVisible, Math.min(100, (n / cap) * 100));
+}
+
+export function maxMetric(rows, key) {
+  return (rows ?? []).reduce((max, row) => Math.max(max, Number(row?.[key]) || 0), 0);
+}
+
 export function money(value, digits = 2) {
   return `$${Number(value).toLocaleString(undefined, {
     minimumFractionDigits: digits,

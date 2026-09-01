@@ -42,6 +42,13 @@
             </div>
             <div id="hv-pill" class="pill">HV —</div>
           </div>
+          <div class="chart-toolbar">
+            <div class="segmented mini" id="chart-toggle" role="tablist" aria-label="Chart type">
+              <button type="button" data-chart="price" class="active">Price</button>
+              <button type="button" data-chart="iv">Historical IV</button>
+            </div>
+            <p id="chart-caption" class="chart-caption">Price</p>
+          </div>
           <div id="price-chart" class="chart" aria-hidden="true"></div>
           <div class="periods" id="period-toggle">
             <button type="button" data-period="1m">1M</button>
@@ -62,10 +69,16 @@
             <button type="button" id="type-call" class="active">Call</button>
             <button type="button" id="type-put">Put</button>
           </div>
-          <label class="field">
-            <span>Strike</span>
-            <select id="strike-select"></select>
-          </label>
+          <div class="chain-head">
+            <span>Option chain</span>
+            <div class="field-chips" id="chain-fields" role="group" aria-label="Visible fields"></div>
+          </div>
+          <div class="chain-scroll">
+            <table class="chain-table" id="chain-table" aria-label="Option chain">
+              <thead></thead>
+              <tbody></tbody>
+            </table>
+          </div>
           <dl class="option-meta" id="option-meta"></dl>
           <p id="trade-error" class="banner error" hidden></p>
           <button type="button" class="primary" id="calculate-btn">Calculate</button>

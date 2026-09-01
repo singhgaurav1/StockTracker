@@ -20,12 +20,15 @@ const els = {
   change: document.getElementById("price-change"),
   hv: document.getElementById("hv-pill"),
   chart: document.getElementById("price-chart"),
+  chartToggle: document.getElementById("chart-toggle"),
+  chartCaption: document.getElementById("chart-caption"),
   periods: document.getElementById("period-toggle"),
   stats: document.getElementById("stock-stats"),
   expiry: document.getElementById("expiry-select"),
   typeCall: document.getElementById("type-call"),
   typePut: document.getElementById("type-put"),
-  strike: document.getElementById("strike-select"),
+  chainFields: document.getElementById("chain-fields"),
+  chainTable: document.getElementById("chain-table"),
   optionMeta: document.getElementById("option-meta"),
   calculate: document.getElementById("calculate-btn"),
   backTrade: document.getElementById("back-trade"),
@@ -40,17 +43,53 @@ const els = {
   status: document.getElementById("status"),
 };
 
+const CHAIN_FIELDS = [
+  { id: "last", label: "Last" },
+  { id: "bidAsk", label: "Bid / Ask" },
+  { id: "iv", label: "IV" },
+  { id: "volume", label: "Volume" },
+  { id: "oi", label: "Open interest" },
+  { id: "moneyness", label: "Moneyness" },
+];
+
+const DEFAULT_FIELDS = {
+  last: true,
+  bidAsk: true,
+  iv: true,
+  volume: true,
+  oi: true,
+  moneyness: false,
+};
+
+const FIELDS_KEY = "stock-tracker.chain-fields";
+
+function loadFields() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(FIELDS_KEY) || "null");
+    if (stored && typeof stored === "object") {
+      return { ...DEFAULT_FIELDS, ...stored };
+    }
+  } catch {
+    /* keep defaults */
+  }
+  return { ...DEFAULT_FIELDS };
+}
+
 const state = {
   ticker: "",
   info: null,
   history: [],
   period: "3m",
+  chart: "price",
   expirations: [],
   selectedExpiry: "",
   right: "call",
   calls: [],
   puts: [],
+  atmCallIv: null,
+  atmPutIv: null,
   selectedStrike: null,
+  fields: loadFields(),
   rangePct: 15,
   display: "multiple",
   term: [],
@@ -122,10 +161,27 @@ function filterHistory() {
   return state.history.filter((bar) => Date.parse(bar.date) >= cutoff);
 }
 
+function latestHv() {
+  return [...state.history].reverse().find((bar) => bar.historicalVolatility != null)?.historicalVolatility ?? null;
+}
+
+function currentAtmIv() {
+  return state.right === "put" ? state.atmPutIv : state.atmCallIv;
+}
+
 function renderChart() {
+  if (state.chart === "iv") {
+    renderIvChart();
+    return;
+  }
+  renderPriceChart();
+}
+
+function renderPriceChart() {
   const bars = filterHistory();
   const width = Math.max(els.chart.clientWidth || 320, 280);
-  const height = 140;
+  const height = 160;
+  els.chartCaption.textContent = "Closing price";
   if (bars.length < 2) {
     els.chart.innerHTML = "";
     return;
@@ -157,21 +213,78 @@ function renderChart() {
   `;
 }
 
+function renderIvChart() {
+  const bars = filterHistory().filter((bar) => bar.historicalVolatility != null);
+  const width = Math.max(els.chart.clientWidth || 320, 280);
+  const height = 160;
+  const atmIv = currentAtmIv();
+  const hvNow = bars.length ? bars[bars.length - 1].historicalVolatility : null;
+  els.chartCaption.textContent = [
+    hvNow != null ? `Solid: 30-day HV ${hvNow.toFixed(1)}%` : "30-day historical volatility",
+    atmIv != null ? `Dashed: ATM IV ${atmIv.toFixed(1)}%` : null,
+  ].filter(Boolean).join(" · ");
+  if (bars.length < 2) {
+    els.chart.innerHTML = `<p class="chain-empty">Not enough history to plot volatility yet.</p>`;
+    return;
+  }
+  const values = bars.map((bar) => bar.historicalVolatility);
+  if (atmIv != null) values.push(atmIv);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const pad = Math.max((max - min) * 0.12, 1);
+  const lo = Math.max(0, min - pad);
+  const hi = max + pad;
+  const span = hi - lo || 1;
+  const yOf = (value) => height - 12 - ((value - lo) / span) * (height - 24);
+  const coords = bars.map((bar, index) => {
+    const x = (index / (bars.length - 1)) * width;
+    return `${x.toFixed(1)},${yOf(bar.historicalVolatility).toFixed(1)}`;
+  });
+  const line = `M${coords.join(" L")}`;
+  const area = `${line} L${width},${height} L0,${height} Z`;
+  const ticks = [hi, (hi + lo) / 2, lo];
+  const grid = ticks.map((tick) => {
+    const y = yOf(tick).toFixed(1);
+    return `<line x1="0" x2="${width}" y1="${y}" y2="${y}" stroke="#2a3545" stroke-width="1" />`;
+  }).join("");
+  const atmLine = atmIv != null ? `
+    <line x1="0" x2="${width}" y1="${yOf(atmIv).toFixed(1)}" y2="${yOf(atmIv).toFixed(1)}" stroke="#f0c35b" stroke-width="1.5" stroke-dasharray="5 4" vector-effect="non-scaling-stroke" />
+  ` : "";
+  els.chart.innerHTML = `
+    <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Historical implied volatility">
+      <defs>
+        <linearGradient id="iv-fill" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stop-color="#8b7cff" stop-opacity="0.38" />
+          <stop offset="100%" stop-color="#8b7cff" stop-opacity="0.03" />
+        </linearGradient>
+      </defs>
+      ${grid}
+      <path d="${area}" fill="url(#iv-fill)"></path>
+      <path d="${line}" fill="none" stroke="#b7adff" stroke-width="2" vector-effect="non-scaling-stroke"></path>
+      ${atmLine}
+    </svg>
+  `;
+}
+
 function stat(label, value) {
   return `<div><dt>${label}</dt><dd>${value}</dd></div>`;
 }
 
 function renderQuote() {
-  const { info, history } = state;
+  const { info } = state;
   const change = info.currentPrice - info.previousClose;
   const changePct = info.previousClose ? (change / info.previousClose) * 100 : 0;
-  const hv = [...history].reverse().find((bar) => bar.historicalVolatility != null)?.historicalVolatility;
+  const hv = latestHv();
+  const atmIv = currentAtmIv();
   els.tradeSymbol.textContent = info.symbol;
   els.company.textContent = info.longName;
   els.price.textContent = Calc.money(info.currentPrice);
   els.change.className = `change ${changeClass(change)}`;
   els.change.textContent = `${change >= 0 ? "+" : "−"}${Calc.money(Math.abs(change)).slice(1)} (${changePct >= 0 ? "+" : "−"}${Math.abs(changePct).toFixed(2)}%)`;
-  els.hv.textContent = hv != null ? `HV ${hv.toFixed(1)}%` : "HV —";
+  els.hv.textContent = [
+    hv != null ? `HV ${hv.toFixed(1)}%` : "HV —",
+    atmIv != null ? `IV ${atmIv.toFixed(1)}%` : null,
+  ].filter(Boolean).join(" · ");
   els.stats.innerHTML = [
     stat("Day high", Calc.money(info.dayHigh)),
     stat("Day low", Calc.money(info.dayLow)),
@@ -206,24 +319,77 @@ function renderType() {
   els.typePut.classList.toggle("active", state.right === "put");
 }
 
+function visibleFields() {
+  return CHAIN_FIELDS.filter((field) => state.fields[field.id]);
+}
+
+function renderFieldChips() {
+  els.chainFields.innerHTML = CHAIN_FIELDS.map((field) => {
+    const active = state.fields[field.id] ? "active" : "";
+    const pressed = state.fields[field.id] ? "true" : "false";
+    return `<button type="button" data-field="${field.id}" class="${active}" aria-pressed="${pressed}">${field.label}</button>`;
+  }).join("");
+}
+
+function saveFields() {
+  localStorage.setItem(FIELDS_KEY, JSON.stringify(state.fields));
+}
+
 function renderStrikes() {
   const rows = currentOptions();
   const spot = state.info?.currentPrice ?? 0;
+  const thead = els.chainTable.querySelector("thead");
+  const tbody = els.chainTable.querySelector("tbody");
   if (!rows.length) {
-    els.strike.innerHTML = "";
+    thead.innerHTML = "";
+    tbody.innerHTML = `<tr><td class="chain-empty" colspan="8">No contracts for this expiration.</td></tr>`;
     els.optionMeta.innerHTML = "";
     return;
   }
   if (state.selectedStrike == null || !rows.some((row) => row.strike === state.selectedStrike)) {
     state.selectedStrike = rows[Calc.nearestIndex(rows.map((row) => row.strike), spot)].strike;
   }
-  els.strike.innerHTML = rows
-    .map((row) => {
-      const selected = row.strike === state.selectedStrike ? "selected" : "";
-      return `<option value="${row.strike}" ${selected}>${Calc.money(row.strike)} · ${row.moneyness} · IV ${row.impliedVolatility.toFixed(1)}%</option>`;
-    })
-    .join("");
+
+  const fields = visibleFields();
+  const maxVol = Calc.maxMetric(rows, "volume");
+  const maxOi = Calc.maxMetric(rows, "openInterest");
+  thead.innerHTML = `<tr><th>Strike</th>${fields.map((field) => `<th>${field.label}</th>`).join("")}</tr>`;
+  tbody.innerHTML = rows.map((row) => {
+    const selected = row.strike === state.selectedStrike ? "selected" : "";
+    const atm = row.moneyness === "ATM" ? "atm" : "";
+    const cells = fields.map((field) => chainCell(row, field.id, maxVol, maxOi)).join("");
+    return `<tr class="${[selected, atm].filter(Boolean).join(" ")}" data-strike="${row.strike}" tabindex="0" aria-selected="${row.strike === state.selectedStrike ? "true" : "false"}"><td>${Calc.money(row.strike)}</td>${cells}</tr>`;
+  }).join("");
   renderOptionMeta();
+  revealSelectedRow();
+}
+
+function revealSelectedRow() {
+  const wrap = els.chainTable.closest(".chain-scroll");
+  const row = els.chainTable.querySelector("tr.selected");
+  if (!wrap || !row) return;
+  const rowTop = row.offsetTop;
+  const rowBottom = rowTop + row.offsetHeight;
+  const viewTop = wrap.scrollTop;
+  const viewBottom = viewTop + wrap.clientHeight;
+  if (rowTop < viewTop || rowBottom > viewBottom) {
+    wrap.scrollTop = Math.max(0, rowTop - wrap.clientHeight / 2 + row.offsetHeight / 2);
+  }
+}
+
+function chainCell(row, field, maxVol, maxOi) {
+  if (field === "last") return `<td>${row.lastPrice > 0 ? Calc.money(row.lastPrice) : "—"}</td>`;
+  if (field === "bidAsk") return `<td>${quotePair(row.bid, row.ask)}</td>`;
+  if (field === "iv") return `<td>${row.impliedVolatility.toFixed(1)}%</td>`;
+  if (field === "volume") return barCell(row.volume, maxVol, "vol");
+  if (field === "oi") return barCell(row.openInterest, maxOi, "oi");
+  if (field === "moneyness") return `<td class="moneyness">${row.moneyness}</td>`;
+  return "<td>—</td>";
+}
+
+function barCell(value, max, kind) {
+  const width = Calc.barWidthPct(value, max);
+  return `<td class="bar-cell"><div class="bar-metric"><span>${value ? Calc.compactNumber(value) : "—"}</span><div class="bar-track" aria-hidden="true"><div class="bar ${kind}" style="width:${width.toFixed(1)}%"></div></div></div></td>`;
 }
 
 function renderOptionMeta() {
@@ -237,6 +403,7 @@ function renderOptionMeta() {
     stat("Premium", Calc.money(premium)),
     stat("Bid / ask", quotePair(option.bid, option.ask)),
     stat("IV", `${option.impliedVolatility.toFixed(1)}%`),
+    stat("Volume", Calc.compactNumber(option.volume)),
     stat("Open interest", Calc.compactNumber(option.openInterest)),
   ].join("");
 }
@@ -337,7 +504,8 @@ async function loadTicker(ticker) {
     showView("trade");
     if (!state.selectedExpiry) {
       setBanner(els.tradeError, "No options are listed for this ticker.");
-      els.strike.innerHTML = "";
+      els.chainTable.querySelector("thead").innerHTML = "";
+      els.chainTable.querySelector("tbody").innerHTML = "";
       els.optionMeta.innerHTML = "";
       return;
     }
@@ -360,6 +528,9 @@ async function loadChain() {
   );
   state.calls = payload.calls ?? [];
   state.puts = payload.puts ?? [];
+  state.atmCallIv = payload.atmCallIv ?? null;
+  state.atmPutIv = payload.atmPutIv ?? null;
+  renderQuote();
   renderStrikes();
   toast("");
 }
@@ -396,6 +567,7 @@ async function calculate() {
 }
 
 renderChips();
+renderFieldChips();
 
 els.form.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -432,19 +604,66 @@ els.expiry.addEventListener("change", async () => {
 els.typeCall.addEventListener("click", () => {
   state.right = "call";
   renderType();
+  renderQuote();
   renderStrikes();
 });
 
 els.typePut.addEventListener("click", () => {
   state.right = "put";
   renderType();
+  renderQuote();
   renderStrikes();
 });
 
-els.strike.addEventListener("change", () => {
-  state.selectedStrike = Number(els.strike.value);
-  renderOptionMeta();
+els.chartToggle.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-chart]");
+  if (!button) return;
+  state.chart = button.dataset.chart;
+  [...els.chartToggle.querySelectorAll("button")].forEach((node) => node.classList.toggle("active", node === button));
+  renderChart();
 });
+
+els.chainFields.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-field]");
+  if (!button) return;
+  const field = button.dataset.field;
+  const enabledCount = visibleFields().length;
+  if (state.fields[field] && enabledCount === 1) return;
+  state.fields[field] = !state.fields[field];
+  saveFields();
+  renderFieldChips();
+  renderStrikes();
+});
+
+els.chainTable.addEventListener("click", (event) => {
+  const row = event.target.closest("tr[data-strike]");
+  if (!row) return;
+  selectStrike(Number(row.dataset.strike));
+});
+
+els.chainTable.addEventListener("keydown", (event) => {
+  const row = event.target.closest("tr[data-strike]");
+  if (!row) return;
+  const rows = [...els.chainTable.querySelectorAll("tr[data-strike]")];
+  const index = rows.indexOf(row);
+  if (event.key === "ArrowDown" && rows[index + 1]) {
+    event.preventDefault();
+    selectStrike(Number(rows[index + 1].dataset.strike), { focus: true });
+  } else if (event.key === "ArrowUp" && rows[index - 1]) {
+    event.preventDefault();
+    selectStrike(Number(rows[index - 1].dataset.strike), { focus: true });
+  } else if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    selectStrike(Number(row.dataset.strike), { focus: true });
+  }
+});
+
+function selectStrike(strike, { focus = false } = {}) {
+  if (!Number.isFinite(strike)) return;
+  state.selectedStrike = strike;
+  renderStrikes();
+  if (focus) els.chainTable.querySelector("tr.selected")?.focus();
+}
 
 els.calculate.addEventListener("click", calculate);
 

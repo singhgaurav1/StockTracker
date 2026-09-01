@@ -62,3 +62,12 @@ test("heatmap rows stay within the requested strike window", () => {
   assert.equal(grid.cells[0].length, grid.columns.length);
   assert.equal(grid.premium > 0, true);
 });
+
+test("bar widths scale to the chain maximum", () => {
+  assert.equal(Calc.barWidthPct(0, 100), 0);
+  assert.equal(Calc.barWidthPct(50, 100), 50);
+  assert.equal(Calc.barWidthPct(100, 100), 100);
+  assert.equal(Calc.barWidthPct(1, 1000) >= 4, true);
+  assert.equal(Calc.maxMetric([{ volume: 10 }, { volume: 40 }, { volume: 25 }], "volume"), 40);
+  assert.equal(Calc.maxMetric([], "openInterest"), 0);
+});
