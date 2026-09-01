@@ -54,16 +54,34 @@ export function nearestIndex(values, target) {
   return best;
 }
 
-export function defaultRangePct(ivPct, years) {
+export function defaultStrikeWindow(spot, strikes, ivPct, years, selectedStrike) {
   const iv = Math.max(sanitizeIv(ivPct) ?? 20, 10) / 100;
   const tenor = Math.max(years, 2 / 365.25);
   const oneSigmaPct = iv * Math.sqrt(tenor) * 100;
-  return Math.round(clamp(oneSigmaPct * 1.5, 10, 40));
+  const halfWindow = clamp(oneSigmaPct * 1.75, 15, 55);
+  const unique = [...new Set((strikes ?? []).filter((s) => s > 0))].sort((a, b) => a - b);
+  const chainMin = unique[0] ?? spot * (1 - halfWindow / 100);
+  const chainMax = unique[unique.length - 1] ?? spot * (1 + halfWindow / 100);
+  let minStrike = spot * (1 - halfWindow / 100);
+  let maxStrike = spot * (1 + halfWindow / 100);
+  if (selectedStrike) {
+    minStrike = Math.min(minStrike, selectedStrike * 0.92);
+    maxStrike = Math.max(maxStrike, selectedStrike * 1.08);
+  }
+  minStrike = clamp(minStrike, chainMin, chainMax);
+  maxStrike = clamp(maxStrike, chainMin, chainMax);
+  if (minStrike > maxStrike) [minStrike, maxStrike] = [maxStrike, minStrike];
+  return {
+    minStrike: roundTo(minStrike, 2),
+    maxStrike: roundTo(maxStrike, 2),
+    chainMin: roundTo(chainMin, 2),
+    chainMax: roundTo(chainMax, 2),
+  };
 }
 
 export function tableCapacity(width = 390, height = 800) {
-  const maxCols = width < 380 ? 5 : width < 700 ? 6 : 8;
-  const maxRows = height < 680 ? 9 : height < 900 ? 11 : 13;
+  const maxCols = width < 380 ? 8 : width < 700 ? 9 : 11;
+  const maxRows = height < 680 ? 10 : height < 900 ? 12 : 14;
   return { maxCols, maxRows };
 }
 
@@ -215,16 +233,16 @@ function niceStep(raw) {
   return 50;
 }
 
-export function buildPriceRows({ spot, strikes, rangePct, maxRows, selectedStrike }) {
-  const lo = spot * (1 - rangePct / 100);
-  const hi = spot * (1 + rangePct / 100);
+export function buildPriceRows({ spot, strikes, strikeMin, strikeMax, maxRows, selectedStrike }) {
+  const lo = Math.min(strikeMin, strikeMax);
+  const hi = Math.max(strikeMin, strikeMax);
   const unique = [...new Set((strikes ?? []).filter((strike) => Number.isFinite(strike) && strike > 0))].sort((a, b) => a - b);
   const step = typicalStep(unique);
   let levels = unique.filter((strike) => strike >= lo && strike <= hi);
 
   const extras = [selectedStrike, unique[nearestIndex(unique, spot)]].filter((value) => Number.isFinite(value) && value > 0);
   for (const extra of extras) {
-    if (!levels.includes(extra)) levels.push(extra);
+    if (extra >= lo && extra <= hi && !levels.includes(extra)) levels.push(extra);
   }
 
   if (levels.length < 5) {
@@ -240,7 +258,7 @@ export function buildPriceRows({ spot, strikes, rangePct, maxRows, selectedStrik
 
   levels.sort((a, b) => a - b);
   if (levels.length > maxRows) {
-    const keep = new Set(extras);
+    const keep = new Set(extras.filter((v) => v >= lo && v <= hi));
     const remainingSlots = Math.max(3, maxRows - keep.size);
     const others = levels.filter((price) => !keep.has(price));
     const picked = [];
@@ -268,7 +286,8 @@ export function buildHeatmap({
   expiry,
   today,
   term,
-  rangePct,
+  strikeMin,
+  strikeMax,
   maxRows,
   maxCols,
   strikes,
@@ -280,7 +299,8 @@ export function buildHeatmap({
   const rows = buildPriceRows({
     spot,
     strikes,
-    rangePct,
+    strikeMin,
+    strikeMax,
     maxRows,
     selectedStrike: strike,
   });

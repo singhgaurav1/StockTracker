@@ -2,6 +2,25 @@ import * as Calc from "./calc.js";
 
 const POPULAR = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "GOOGL", "META", "SPY", "QQQ", "IWM"];
 
+const CHAIN_COLUMNS = [
+  { id: "last", label: "Last" },
+  { id: "oi", label: "Open interest", helpKey: "oi" },
+  { id: "volume", label: "Volume", helpKey: "volume" },
+  { id: "bidAsk", label: "Bid / Ask" },
+  { id: "iv", label: "IV" },
+];
+
+const HELP_COPY = {
+  volume: {
+    title: "Volume",
+    body: "The number of contracts traded today for this strike. Higher volume usually means more liquidity and tighter pricing.",
+  },
+  oi: {
+    title: "Open interest",
+    body: "The number of outstanding contracts that have not been closed. Rising open interest can mean new positions are being opened at that strike.",
+  },
+};
+
 const els = {
   pick: document.getElementById("view-pick"),
   trade: document.getElementById("view-trade"),
@@ -27,53 +46,27 @@ const els = {
   expiry: document.getElementById("expiry-select"),
   typeCall: document.getElementById("type-call"),
   typePut: document.getElementById("type-put"),
-  chainFields: document.getElementById("chain-fields"),
   chainTable: document.getElementById("chain-table"),
-  optionMeta: document.getElementById("option-meta"),
+  calculateBar: document.getElementById("calculate-bar"),
+  selectedContract: document.getElementById("selected-contract"),
+  selectedPremium: document.getElementById("selected-premium"),
   calculate: document.getElementById("calculate-btn"),
   backTrade: document.getElementById("back-trade"),
   resultTitle: document.getElementById("result-title"),
   resultSub: document.getElementById("result-sub"),
-  range: document.getElementById("range-input"),
-  rangeLabel: document.getElementById("range-label"),
+  strikeMinInput: document.getElementById("strike-min-input"),
+  strikeMaxInput: document.getElementById("strike-max-input"),
+  strikeMinRange: document.getElementById("strike-min-range"),
+  strikeMaxRange: document.getElementById("strike-max-range"),
   modeMultiple: document.getElementById("mode-multiple"),
   modePct: document.getElementById("mode-pct"),
-  ivNote: document.getElementById("result-iv"),
   heatmap: document.getElementById("heatmap"),
   status: document.getElementById("status"),
+  helpModal: document.getElementById("help-modal"),
+  helpTitle: document.getElementById("help-title"),
+  helpBody: document.getElementById("help-body"),
+  helpClose: document.getElementById("help-close"),
 };
-
-const CHAIN_FIELDS = [
-  { id: "last", label: "Last" },
-  { id: "bidAsk", label: "Bid / Ask" },
-  { id: "iv", label: "IV" },
-  { id: "volume", label: "Volume" },
-  { id: "oi", label: "Open interest" },
-  { id: "moneyness", label: "Moneyness" },
-];
-
-const DEFAULT_FIELDS = {
-  last: true,
-  bidAsk: true,
-  iv: true,
-  volume: true,
-  oi: true,
-  moneyness: false,
-};
-
-const FIELDS_KEY = "stock-tracker.chain-fields";
-
-function loadFields() {
-  try {
-    const stored = JSON.parse(localStorage.getItem(FIELDS_KEY) || "null");
-    if (stored && typeof stored === "object") {
-      return { ...DEFAULT_FIELDS, ...stored };
-    }
-  } catch {
-    /* keep defaults */
-  }
-  return { ...DEFAULT_FIELDS };
-}
 
 const state = {
   ticker: "",
@@ -89,18 +82,46 @@ const state = {
   atmCallIv: null,
   atmPutIv: null,
   selectedStrike: null,
-  fields: loadFields(),
-  rangePct: 15,
+  strikeMin: null,
+  strikeMax: null,
+  chainMin: null,
+  chainMax: null,
   display: "multiple",
   term: [],
   heatmap: null,
+  view: "pick",
 };
 
-function showView(name) {
+function showView(name, { push = true } = {}) {
+  state.view = name;
   els.pick.hidden = name !== "pick";
   els.trade.hidden = name !== "trade";
   els.results.hidden = name !== "results";
+  document.body.dataset.view = name;
+  if (push) {
+    const url = name === "pick" ? `${location.pathname}${location.search}` : `#${name}`;
+    history.pushState({ view: name }, "", url);
+  }
+  updateBottomBar();
 }
+
+function goBack() {
+  if (history.length > 1) {
+    history.back();
+    return;
+  }
+  if (state.view === "results") showView("trade", { push: false });
+  else if (state.view === "trade") showView("pick", { push: false });
+}
+
+window.addEventListener("popstate", (event) => {
+  const view = event.state?.view ?? "pick";
+  showView(view, { push: false });
+});
+
+history.replaceState({ view: "pick" }, "", `${location.pathname}${location.search}`);
+if (location.hash === "#trade") showView("trade", { push: false });
+else if (location.hash === "#results") showView("results", { push: false });
 
 function toast(message) {
   els.status.hidden = !message;
@@ -115,9 +136,7 @@ function setBanner(el, message) {
 async function api(path) {
   const response = await fetch(path);
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(data.error || "Request failed");
-  }
+  if (!response.ok) throw new Error(data.error || "Request failed");
   return data;
 }
 
@@ -141,6 +160,10 @@ function currentOptions() {
 
 function selectedOption() {
   return currentOptions().find((row) => row.strike === state.selectedStrike) ?? null;
+}
+
+function chainStrikes() {
+  return currentOptions().map((row) => row.strike);
 }
 
 function changeClass(value) {
@@ -169,19 +192,20 @@ function currentAtmIv() {
   return state.right === "put" ? state.atmPutIv : state.atmCallIv;
 }
 
+function chartHeight() {
+  return window.innerWidth < 720 ? 88 : 120;
+}
+
 function renderChart() {
-  if (state.chart === "iv") {
-    renderIvChart();
-    return;
-  }
-  renderPriceChart();
+  if (state.chart === "iv") renderIvChart();
+  else renderPriceChart();
 }
 
 function renderPriceChart() {
   const bars = filterHistory();
   const width = Math.max(els.chart.clientWidth || 320, 280);
-  const height = 160;
-  els.chartCaption.textContent = "Closing price";
+  const height = chartHeight();
+  els.chartCaption.textContent = "";
   if (bars.length < 2) {
     els.chart.innerHTML = "";
     return;
@@ -192,7 +216,7 @@ function renderPriceChart() {
   const span = max - min || 1;
   const coords = closes.map((close, index) => {
     const x = (index / (closes.length - 1)) * width;
-    const y = height - 10 - ((close - min) / span) * (height - 20);
+    const y = height - 8 - ((close - min) / span) * (height - 16);
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   });
   const line = `M${coords.join(" L")}`;
@@ -216,15 +240,15 @@ function renderPriceChart() {
 function renderIvChart() {
   const bars = filterHistory().filter((bar) => bar.historicalVolatility != null);
   const width = Math.max(els.chart.clientWidth || 320, 280);
-  const height = 160;
+  const height = chartHeight();
   const atmIv = currentAtmIv();
   const hvNow = bars.length ? bars[bars.length - 1].historicalVolatility : null;
   els.chartCaption.textContent = [
-    hvNow != null ? `Solid: 30-day HV ${hvNow.toFixed(1)}%` : "30-day historical volatility",
-    atmIv != null ? `Dashed: ATM IV ${atmIv.toFixed(1)}%` : null,
+    hvNow != null ? `HV ${hvNow.toFixed(1)}%` : null,
+    atmIv != null ? `ATM IV ${atmIv.toFixed(1)}%` : null,
   ].filter(Boolean).join(" · ");
   if (bars.length < 2) {
-    els.chart.innerHTML = `<p class="chain-empty">Not enough history to plot volatility yet.</p>`;
+    els.chart.innerHTML = `<p class="chain-empty">Not enough history yet.</p>`;
     return;
   }
   const values = bars.map((bar) => bar.historicalVolatility);
@@ -235,18 +259,13 @@ function renderIvChart() {
   const lo = Math.max(0, min - pad);
   const hi = max + pad;
   const span = hi - lo || 1;
-  const yOf = (value) => height - 12 - ((value - lo) / span) * (height - 24);
+  const yOf = (value) => height - 10 - ((value - lo) / span) * (height - 20);
   const coords = bars.map((bar, index) => {
     const x = (index / (bars.length - 1)) * width;
     return `${x.toFixed(1)},${yOf(bar.historicalVolatility).toFixed(1)}`;
   });
   const line = `M${coords.join(" L")}`;
   const area = `${line} L${width},${height} L0,${height} Z`;
-  const ticks = [hi, (hi + lo) / 2, lo];
-  const grid = ticks.map((tick) => {
-    const y = yOf(tick).toFixed(1);
-    return `<line x1="0" x2="${width}" y1="${y}" y2="${y}" stroke="#2a3545" stroke-width="1" />`;
-  }).join("");
   const atmLine = atmIv != null ? `
     <line x1="0" x2="${width}" y1="${yOf(atmIv).toFixed(1)}" y2="${yOf(atmIv).toFixed(1)}" stroke="#f0c35b" stroke-width="1.5" stroke-dasharray="5 4" vector-effect="non-scaling-stroke" />
   ` : "";
@@ -258,7 +277,6 @@ function renderIvChart() {
           <stop offset="100%" stop-color="#8b7cff" stop-opacity="0.03" />
         </linearGradient>
       </defs>
-      ${grid}
       <path d="${area}" fill="url(#iv-fill)"></path>
       <path d="${line}" fill="none" stroke="#b7adff" stroke-width="2" vector-effect="non-scaling-stroke"></path>
       ${atmLine}
@@ -286,12 +304,10 @@ function renderQuote() {
     atmIv != null ? `IV ${atmIv.toFixed(1)}%` : null,
   ].filter(Boolean).join(" · ");
   els.stats.innerHTML = [
-    stat("Day high", Calc.money(info.dayHigh)),
-    stat("Day low", Calc.money(info.dayLow)),
-    stat("Volume", Calc.compactNumber(info.volume)),
-    stat("Avg vol", Calc.compactNumber(info.averageVolume)),
-    stat("52w high", Calc.money(info.fiftyTwoWeekHigh)),
-    stat("52w low", Calc.money(info.fiftyTwoWeekLow)),
+    stat("High", Calc.money(info.dayHigh)),
+    stat("Low", Calc.money(info.dayLow)),
+    stat("Vol", Calc.compactNumber(info.volume)),
+    stat("52w", `${Calc.money(info.fiftyTwoWeekLow, 0)}–${Calc.money(info.fiftyTwoWeekHigh, 0)}`),
   ].join("");
   renderChart();
 }
@@ -301,7 +317,6 @@ function expiryLabel(date) {
   const pretty = new Date(`${date}T00:00:00Z`).toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
-    year: "numeric",
     timeZone: "UTC",
   });
   return `${pretty} · ${dte}d`;
@@ -319,20 +334,11 @@ function renderType() {
   els.typePut.classList.toggle("active", state.right === "put");
 }
 
-function visibleFields() {
-  return CHAIN_FIELDS.filter((field) => state.fields[field.id]);
-}
-
-function renderFieldChips() {
-  els.chainFields.innerHTML = CHAIN_FIELDS.map((field) => {
-    const active = state.fields[field.id] ? "active" : "";
-    const pressed = state.fields[field.id] ? "true" : "false";
-    return `<button type="button" data-field="${field.id}" class="${active}" aria-pressed="${pressed}">${field.label}</button>`;
-  }).join("");
-}
-
-function saveFields() {
-  localStorage.setItem(FIELDS_KEY, JSON.stringify(state.fields));
+function headerCell(column) {
+  if (column.helpKey) {
+    return `<th><button type="button" class="th-help" data-help="${column.helpKey}">${column.label}</button></th>`;
+  }
+  return `<th>${column.label}</th>`;
 }
 
 function renderStrikes() {
@@ -342,26 +348,25 @@ function renderStrikes() {
   const tbody = els.chainTable.querySelector("tbody");
   if (!rows.length) {
     thead.innerHTML = "";
-    tbody.innerHTML = `<tr><td class="chain-empty" colspan="8">No contracts for this expiration.</td></tr>`;
-    els.optionMeta.innerHTML = "";
+    tbody.innerHTML = `<tr><td class="chain-empty" colspan="6">No contracts for this expiration.</td></tr>`;
+    updateBottomBar();
     return;
   }
   if (state.selectedStrike == null || !rows.some((row) => row.strike === state.selectedStrike)) {
     state.selectedStrike = rows[Calc.nearestIndex(rows.map((row) => row.strike), spot)].strike;
   }
 
-  const fields = visibleFields();
   const maxVol = Calc.maxMetric(rows, "volume");
   const maxOi = Calc.maxMetric(rows, "openInterest");
-  thead.innerHTML = `<tr><th>Strike</th>${fields.map((field) => `<th>${field.label}</th>`).join("")}</tr>`;
+  thead.innerHTML = `<tr><th>Strike</th>${CHAIN_COLUMNS.map(headerCell).join("")}</tr>`;
   tbody.innerHTML = rows.map((row) => {
     const selected = row.strike === state.selectedStrike ? "selected" : "";
     const atm = row.moneyness === "ATM" ? "atm" : "";
-    const cells = fields.map((field) => chainCell(row, field.id, maxVol, maxOi)).join("");
+    const cells = CHAIN_COLUMNS.map((column) => chainCell(row, column.id, maxVol, maxOi)).join("");
     return `<tr class="${[selected, atm].filter(Boolean).join(" ")}" data-strike="${row.strike}" tabindex="0" aria-selected="${row.strike === state.selectedStrike ? "true" : "false"}"><td>${Calc.money(row.strike)}</td>${cells}</tr>`;
   }).join("");
-  renderOptionMeta();
   revealSelectedRow();
+  updateBottomBar();
 }
 
 function revealSelectedRow() {
@@ -383,7 +388,6 @@ function chainCell(row, field, maxVol, maxOi) {
   if (field === "iv") return `<td>${row.impliedVolatility.toFixed(1)}%</td>`;
   if (field === "volume") return barCell(row.volume, maxVol, "vol");
   if (field === "oi") return barCell(row.openInterest, maxOi, "oi");
-  if (field === "moneyness") return `<td class="moneyness">${row.moneyness}</td>`;
   return "<td>—</td>";
 }
 
@@ -392,26 +396,65 @@ function barCell(value, max, kind) {
   return `<td class="bar-cell"><div class="bar-metric"><span>${value ? Calc.compactNumber(value) : "—"}</span><div class="bar-track" aria-hidden="true"><div class="bar ${kind}" style="width:${width.toFixed(1)}%"></div></div></div></td>`;
 }
 
-function renderOptionMeta() {
+function updateBottomBar() {
   const option = selectedOption();
-  if (!option) {
-    els.optionMeta.innerHTML = "";
-    return;
-  }
+  const show = state.view === "trade" && option != null;
+  els.calculateBar.hidden = !show;
+  if (!show) return;
   const premium = Calc.optionPremium(option);
-  els.optionMeta.innerHTML = [
-    stat("Premium", Calc.money(premium)),
-    stat("Bid / ask", quotePair(option.bid, option.ask)),
-    stat("IV", `${option.impliedVolatility.toFixed(1)}%`),
-    stat("Volume", Calc.compactNumber(option.volume)),
-    stat("Open interest", Calc.compactNumber(option.openInterest)),
-  ].join("");
+  els.selectedContract.textContent = `${Calc.money(option.strike)} ${state.right === "call" ? "Call" : "Put"}`;
+  els.selectedPremium.textContent = premium > 0 ? `Premium ${Calc.money(premium)}` : "No premium yet";
 }
 
-function setRange(value) {
-  state.rangePct = Number(value);
-  els.range.value = String(state.rangePct);
-  els.rangeLabel.textContent = `±${state.rangePct}%`;
+function syncStrikeWindowInputs() {
+  if (state.strikeMin == null || state.strikeMax == null) return;
+  els.strikeMinInput.value = state.strikeMin;
+  els.strikeMaxInput.value = state.strikeMax;
+  els.strikeMinRange.min = state.chainMin;
+  els.strikeMinRange.max = state.chainMax;
+  els.strikeMinRange.step = typicalStrikeStep();
+  els.strikeMaxRange.min = state.chainMin;
+  els.strikeMaxRange.max = state.chainMax;
+  els.strikeMaxRange.step = typicalStrikeStep();
+  els.strikeMinRange.value = state.strikeMin;
+  els.strikeMaxRange.value = state.strikeMax;
+}
+
+function typicalStrikeStep() {
+  const strikes = chainStrikes();
+  if (strikes.length < 2) return 0.5;
+  const step = Calc.typicalStep(strikes);
+  return step >= 1 ? step : 0.5;
+}
+
+function setStrikeWindow(minStrike, maxStrike, { rebuild = true } = {}) {
+  const lo = Math.min(minStrike, maxStrike);
+  const hi = Math.max(minStrike, maxStrike);
+  state.strikeMin = Calc.clamp(lo, state.chainMin, state.chainMax);
+  state.strikeMax = Calc.clamp(hi, state.chainMin, state.chainMax);
+  if (state.strikeMin > state.strikeMax) {
+    state.strikeMin = state.chainMin;
+    state.strikeMax = state.chainMax;
+  }
+  syncStrikeWindowInputs();
+  if (rebuild) rebuildHeatmap();
+}
+
+function initStrikeWindow(option) {
+  const strikes = chainStrikes();
+  const years = Math.max(Calc.yearsBetween(Calc.todayISO(), state.selectedExpiry), 2 / 365.25);
+  const bounds = Calc.defaultStrikeWindow(
+    state.info.currentPrice,
+    strikes,
+    option.impliedVolatility,
+    years,
+    option.strike,
+  );
+  state.chainMin = bounds.chainMin;
+  state.chainMax = bounds.chainMax;
+  state.strikeMin = bounds.minStrike;
+  state.strikeMax = bounds.maxStrike;
+  syncStrikeWindowInputs();
 }
 
 function renderHeatmap() {
@@ -421,18 +464,16 @@ function renderHeatmap() {
   const spot = state.info.currentPrice;
   els.resultTitle.textContent = `${state.info.symbol} ${Calc.money(option.strike)} ${state.right === "call" ? "Call" : "Put"}`;
   els.resultSub.textContent = `${state.selectedExpiry} · paid ${Calc.money(grid.premium)}`;
-  els.ivNote.textContent = `IV is filled from the options term structure for this strike. ${grid.kind} columns through expiry.`;
 
   const cols = grid.columns.length;
-  els.heatmap.style.gridTemplateColumns = `minmax(52px, 17%) repeat(${cols}, minmax(0, 1fr))`;
+  els.heatmap.style.gridTemplateColumns = `minmax(48px, 14%) repeat(${cols}, minmax(0, 1fr))`;
   els.heatmap.style.gridTemplateRows = `auto repeat(${grid.rows.length}, minmax(0, 1fr))`;
 
   const head = [
     `<div class="cell head">Price</div>`,
     ...grid.columns.map((column) => {
       const label = Calc.formatDateLabel(column.date, Calc.todayISO(), state.selectedExpiry);
-      const iv = column.ivPct != null ? `IV ${column.ivPct.toFixed(1)}%` : "IV —";
-      return `<div class="cell head">${label}<small>${iv}</small></div>`;
+      return `<div class="cell head">${label}</div>`;
     }),
   ];
 
@@ -461,7 +502,7 @@ function renderHeatmap() {
 
 function rebuildHeatmap() {
   const option = selectedOption();
-  if (!option || !state.info) return;
+  if (!option || !state.info || state.strikeMin == null || state.strikeMax == null) return;
   const { maxCols, maxRows } = Calc.tableCapacity(window.innerWidth, window.innerHeight);
   state.heatmap = Calc.buildHeatmap({
     spot: state.info.currentPrice,
@@ -470,10 +511,11 @@ function rebuildHeatmap() {
     expiry: state.selectedExpiry,
     today: Calc.todayISO(),
     term: state.term,
-    rangePct: state.rangePct,
+    strikeMin: state.strikeMin,
+    strikeMax: state.strikeMax,
     maxRows,
     maxCols,
-    strikes: currentOptions().map((row) => row.strike),
+    strikes: chainStrikes(),
   });
   renderHeatmap();
 }
@@ -506,14 +548,13 @@ async function loadTicker(ticker) {
       setBanner(els.tradeError, "No options are listed for this ticker.");
       els.chainTable.querySelector("thead").innerHTML = "";
       els.chainTable.querySelector("tbody").innerHTML = "";
-      els.optionMeta.innerHTML = "";
       return;
     }
     await loadChain();
     setBanner(els.tradeError, "");
   } catch (error) {
     setBanner(els.pickError, error.message);
-    showView("pick");
+    showView("pick", { push: false });
   } finally {
     els.lookup.disabled = false;
     els.refresh.disabled = false;
@@ -552,9 +593,7 @@ async function calculate() {
       `/api/iv-term?ticker=${encodeURIComponent(state.ticker)}&expiry=${encodeURIComponent(state.selectedExpiry)}&strike=${encodeURIComponent(option.strike)}&right=${encodeURIComponent(state.right)}`,
     );
     state.term = payload.term ?? [];
-    const years = Math.max(Calc.yearsBetween(Calc.todayISO(), state.selectedExpiry), 2 / 365.25);
-    const defaultRange = Calc.defaultRangePct(option.impliedVolatility, years);
-    setRange(defaultRange);
+    initStrikeWindow(option);
     rebuildHeatmap();
     showView("results");
     setBanner(els.tradeError, "");
@@ -566,8 +605,15 @@ async function calculate() {
   }
 }
 
+function openHelp(key) {
+  const copy = HELP_COPY[key];
+  if (!copy) return;
+  els.helpTitle.textContent = copy.title;
+  els.helpBody.textContent = copy.body;
+  els.helpModal.showModal();
+}
+
 renderChips();
-renderFieldChips();
 
 els.form.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -579,8 +625,8 @@ els.chips.addEventListener("click", (event) => {
   if (button) loadTicker(button.dataset.ticker);
 });
 
-els.backPick.addEventListener("click", () => showView("pick"));
-els.backTrade.addEventListener("click", () => showView("trade"));
+els.backPick.addEventListener("click", goBack);
+els.backTrade.addEventListener("click", goBack);
 els.refresh.addEventListener("click", () => loadTicker(state.ticker));
 
 els.periods.addEventListener("click", (event) => {
@@ -623,19 +669,13 @@ els.chartToggle.addEventListener("click", (event) => {
   renderChart();
 });
 
-els.chainFields.addEventListener("click", (event) => {
-  const button = event.target.closest("button[data-field]");
-  if (!button) return;
-  const field = button.dataset.field;
-  const enabledCount = visibleFields().length;
-  if (state.fields[field] && enabledCount === 1) return;
-  state.fields[field] = !state.fields[field];
-  saveFields();
-  renderFieldChips();
-  renderStrikes();
-});
-
 els.chainTable.addEventListener("click", (event) => {
+  const help = event.target.closest("button[data-help]");
+  if (help) {
+    event.stopPropagation();
+    openHelp(help.dataset.help);
+    return;
+  }
   const row = event.target.closest("tr[data-strike]");
   if (!row) return;
   selectStrike(Number(row.dataset.strike));
@@ -667,9 +707,24 @@ function selectStrike(strike, { focus = false } = {}) {
 
 els.calculate.addEventListener("click", calculate);
 
-els.range.addEventListener("input", () => {
-  setRange(els.range.value);
-  rebuildHeatmap();
+els.strikeMinRange.addEventListener("input", () => {
+  const min = Number(els.strikeMinRange.value);
+  const max = Math.max(min, Number(els.strikeMaxRange.value));
+  setStrikeWindow(min, max);
+});
+
+els.strikeMaxRange.addEventListener("input", () => {
+  const max = Number(els.strikeMaxRange.value);
+  const min = Math.min(max, Number(els.strikeMinRange.value));
+  setStrikeWindow(min, max);
+});
+
+els.strikeMinInput.addEventListener("change", () => {
+  setStrikeWindow(Number(els.strikeMinInput.value), Number(els.strikeMaxInput.value));
+});
+
+els.strikeMaxInput.addEventListener("change", () => {
+  setStrikeWindow(Number(els.strikeMinInput.value), Number(els.strikeMaxInput.value));
 });
 
 els.modeMultiple.addEventListener("click", () => {
@@ -684,6 +739,11 @@ els.modePct.addEventListener("click", () => {
   els.modePct.classList.add("active");
   els.modeMultiple.classList.remove("active");
   renderHeatmap();
+});
+
+els.helpClose.addEventListener("click", () => els.helpModal.close());
+els.helpModal.addEventListener("click", (event) => {
+  if (event.target === els.helpModal) els.helpModal.close();
 });
 
 window.addEventListener("resize", () => {
