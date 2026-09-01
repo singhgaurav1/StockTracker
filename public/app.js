@@ -198,6 +198,7 @@ function renderExpiries() {
   els.expiry.innerHTML = state.expirations
     .map((date) => `<option value="${date}" ${date === state.selectedExpiry ? "selected" : ""}>${expiryLabel(date)}</option>`)
     .join("");
+  if (state.selectedExpiry) els.expiry.value = state.selectedExpiry;
 }
 
 function renderType() {

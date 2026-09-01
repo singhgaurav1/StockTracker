@@ -39,6 +39,10 @@ body {
   padding: var(--pad);
 }
 
+.view[hidden] {
+  display: none !important;
+}
+
 .view-pick {
   min-height: 100dvh;
   display: flex;
