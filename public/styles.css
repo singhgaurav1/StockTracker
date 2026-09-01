@@ -729,6 +729,7 @@ button:disabled {
   position: relative;
   height: 40px;
   min-width: 0;
+  touch-action: none;
 }
 
 .strike-slider::before,
