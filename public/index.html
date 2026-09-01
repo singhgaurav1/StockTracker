@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Stock & Options Viewer</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero">
+        <h1>📈 Stock &amp; Options Viewer</h1>
+        <form id="ticker-form" class="ticker-row">
+          <label class="field">
+            <span>Enter Stock Ticker</span>
+            <input id="ticker-input" name="ticker" value="AAPL" maxlength="10" autocomplete="off" />
+          </label>
+          <button type="submit" id="refresh-btn">🔄 Refresh Data</button>
+        </form>
+      </header>
+
+      <p id="status" class="status" hidden></p>
+      <p id="error" class="error" hidden></p>
+
+      <section id="app" hidden>
+        <section class="card stock-header">
+          <div>
+            <h2 id="company-name"></h2>
+            <div id="stock-price" class="stock-price"></div>
+            <div id="price-change"></div>
+          </div>
+          <div class="metrics">
+            <div><span>Day High</span><strong id="day-high"></strong></div>
+            <div><span>Volume</span><strong id="volume"></strong></div>
+            <div><span>Day Low</span><strong id="day-low"></strong></div>
+            <div><span>Avg Volume</span><strong id="avg-volume"></strong></div>
+          </div>
+        </section>
+
+        <section class="card">
+          <h3>Volatility Analysis</h3>
+          <div class="split">
+            <div id="hv-chart" class="chart"></div>
+            <div>
+              <div id="smile-chart" class="chart"></div>
+              <div class="metric-inline">
+                <span>Current 30-Day Historical Volatility</span>
+                <strong id="current-hv">—</strong>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="card">
+          <h3>Price History</h3>
+          <div id="price-chart" class="chart tall"></div>
+        </section>
+
+        <section class="card">
+          <h3>Options Chain</h3>
+          <label class="field compact">
+            <span>Select Expiration Date</span>
+            <select id="expiry-select"></select>
+          </label>
+
+          <h4>Implied Volatility Summary</h4>
+          <div class="metrics three">
+            <div><span>ATM Calls IV</span><strong id="atm-call-iv">N/A</strong></div>
+            <div><span>ATM Puts IV</span><strong id="atm-put-iv">N/A</strong></div>
+            <div><span>IV Skew (P-C)</span><strong id="iv-skew">N/A</strong></div>
+          </div>
+
+          <div class="split">
+            <div>
+              <h4>Calls</h4>
+              <label class="field compact">
+                <span>Select Call Option</span>
+                <select id="call-select"></select>
+              </label>
+              <div class="table-wrap" id="calls-table"></div>
+            </div>
+            <div>
+              <h4>Puts</h4>
+              <label class="field compact">
+                <span>Select Put Option</span>
+                <select id="put-select"></select>
+              </label>
+              <div class="table-wrap" id="puts-table"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="card">
+          <h3>Options Profit Calculator</h3>
+          <div class="split">
+            <div>
+              <button type="button" id="calc-call">Calculate Call Profit/Loss</button>
+              <div id="call-profit" class="table-wrap"></div>
+            </div>
+            <div>
+              <button type="button" id="calc-put">Calculate Put Profit/Loss</button>
+              <div id="put-profit" class="table-wrap"></div>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <footer>
+        Data provided by Yahoo Finance. Refresh data every 5 minutes for latest updates.
+      </footer>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

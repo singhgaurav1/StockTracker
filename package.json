@@ -1,0 +1,12 @@
+{
+  "name": "stock-tracker",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy --temporary",
+    "types": "wrangler types"
+  },
+  "devDependencies": {
+    "wrangler": "^4.102.0"
+  }
+}
