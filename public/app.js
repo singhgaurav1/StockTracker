@@ -173,6 +173,7 @@ async function restoreFromUrl({ push = false } = {}) {
     state.restoring = true;
     showView("pick", { push: false });
     state.restoring = false;
+    history.replaceState({ view: "pick" }, "", location.pathname);
     return;
   }
 
