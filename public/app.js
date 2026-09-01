@@ -60,12 +60,17 @@ const els = {
   strikeMaxRange: document.getElementById("strike-max-range"),
   modeMultiple: document.getElementById("mode-multiple"),
   modePct: document.getElementById("mode-pct"),
+  copyLink: document.getElementById("copy-link"),
   heatmap: document.getElementById("heatmap"),
   status: document.getElementById("status"),
   helpModal: document.getElementById("help-modal"),
   helpTitle: document.getElementById("help-title"),
   helpBody: document.getElementById("help-body"),
   helpClose: document.getElementById("help-close"),
+  cellModal: document.getElementById("cell-modal"),
+  cellModalTitle: document.getElementById("cell-modal-title"),
+  cellModalBody: document.getElementById("cell-modal-body"),
+  cellModalClose: document.getElementById("cell-modal-close"),
 };
 
 const state = {
@@ -86,11 +91,12 @@ const state = {
   strikeMax: null,
   chainMin: null,
   chainMax: null,
-  display: "multiple",
+  display: "pct",
   term: [],
   heatmap: null,
   view: "pick",
   restoring: false,
+  windowTicker: "",
 };
 
 const CHART_PLOT_HEIGHT = () => (window.innerWidth < 720 ? 88 : 120);
@@ -109,11 +115,11 @@ function buildShareUrl() {
   if (state.selectedStrike != null) params.set("strike", String(state.selectedStrike));
   if (state.period !== "3m") params.set("period", state.period);
   if (state.chart !== "price") params.set("chart", state.chart);
+  if (state.strikeMin != null) params.set("min", String(state.strikeMin));
+  if (state.strikeMax != null) params.set("max", String(state.strikeMax));
   if (state.view === "results" && state.heatmap) {
     params.set("pnl", "1");
-    if (state.strikeMin != null) params.set("min", String(state.strikeMin));
-    if (state.strikeMax != null) params.set("max", String(state.strikeMax));
-    if (state.display !== "multiple") params.set("mode", state.display);
+    if (state.display !== "pct") params.set("mode", state.display);
   }
   const qs = params.toString();
   return qs ? `${location.pathname}?${qs}` : location.pathname;
@@ -615,6 +621,29 @@ function syncStrikeWindowInputs() {
   els.strikeMinRange.parentElement.style.setProperty("--max-ratio", String(maxRatio));
 }
 
+function persistWindow() {
+  if (!state.ticker || state.strikeMin == null || state.strikeMax == null) return;
+  try {
+    sessionStorage.setItem(`st-window:${state.ticker}`, JSON.stringify({
+      min: state.strikeMin,
+      max: state.strikeMax,
+      chainMin: state.chainMin,
+      chainMax: state.chainMax,
+    }));
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+function readSavedWindow(ticker) {
+  try {
+    const raw = sessionStorage.getItem(`st-window:${ticker}`);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
 function setStrikeWindow(minStrike, maxStrike, { rebuild = true, sync = true } = {}) {
   const spot = state.info?.currentPrice ?? 0;
   const hardMax = Calc.snapToStep(Math.max(spot * 20, state.chainMax || 0, 5), 5, "ceil");
@@ -626,12 +655,14 @@ function setStrikeWindow(minStrike, maxStrike, { rebuild = true, sync = true } =
   if (hi > state.chainMax) state.chainMax = hi;
   state.strikeMin = lo;
   state.strikeMax = hi;
+  state.windowTicker = state.ticker;
+  persistWindow();
   syncStrikeWindowInputs();
   if (rebuild) rebuildHeatmap();
   if (sync) syncUrl({ push: false, replace: true });
 }
 
-function initStrikeWindow(option) {
+function initStrikeWindow(option, { force = false } = {}) {
   const strikes = chainStrikes();
   const years = Math.max(Calc.yearsBetween(Calc.todayISO(), state.selectedExpiry), 2 / 365.25);
   const bounds = Calc.defaultStrikeWindow(
@@ -641,10 +672,27 @@ function initStrikeWindow(option) {
     years,
     option.strike,
   );
-  state.chainMin = bounds.chainMin;
-  state.chainMax = bounds.chainMax;
-  state.strikeMin = bounds.minStrike;
-  state.strikeMax = bounds.maxStrike;
+  const saved = !force && state.ticker
+    ? (state.windowTicker === state.ticker && state.strikeMin != null && state.strikeMax != null
+      ? { min: state.strikeMin, max: state.strikeMax, chainMin: state.chainMin, chainMax: state.chainMax }
+      : readSavedWindow(state.ticker))
+    : null;
+  if (saved?.min != null && saved?.max != null && saved.min < saved.max) {
+    state.chainMin = Math.min(bounds.chainMin, saved.chainMin ?? saved.min);
+    state.chainMax = Math.max(bounds.chainMax, saved.chainMax ?? saved.max);
+    state.strikeMin = saved.min;
+    state.strikeMax = saved.max;
+    state.windowTicker = state.ticker;
+    if (state.strikeMin < state.chainMin) state.chainMin = state.strikeMin;
+    if (state.strikeMax > state.chainMax) state.chainMax = state.strikeMax;
+  } else {
+    state.chainMin = bounds.chainMin;
+    state.chainMax = bounds.chainMax;
+    state.strikeMin = bounds.minStrike;
+    state.strikeMax = bounds.maxStrike;
+    state.windowTicker = state.ticker;
+  }
+  persistWindow();
   syncStrikeWindowInputs();
 }
 
@@ -684,9 +732,11 @@ function renderHeatmap() {
           ? "Now"
           : `${delta >= 0 ? "+" : "−"}${Math.abs(delta).toFixed(0)}%`;
     const header = `<div class="${rowClass}">${Calc.money(price, price >= 100 ? 0 : 2)}<small>${marker}</small></div>`;
-    const cells = grid.cells[rowIndex].map((cell) => {
+    const cells = grid.cells[rowIndex].map((cell, colIndex) => {
       const text = state.display === "pct" ? Calc.formatPct(cell.pct) : Calc.formatMultiple(cell.multiple);
-      return `<div class="cell" style="background:${Calc.heatColor(cell.multiple, cell.pct)}">${text}</div>`;
+      const bg = Calc.heatColor(cell.multiple, cell.pct);
+      const fg = Calc.heatTextColor(cell.multiple, cell.pct);
+      return `<button type="button" class="cell heat" data-row="${rowIndex}" data-col="${colIndex}" style="background:${bg};color:${fg}">${text}</button>`;
     });
     return [header, ...cells];
   });
@@ -722,6 +772,15 @@ async function loadTicker(ticker, { expiry, right, strike, pushUrl = true } = {}
   setBanner(els.pickError, "");
   toast("Loading stock…");
   try {
+    const tickerChanged = state.ticker && state.ticker !== symbol;
+    if (tickerChanged) {
+      state.strikeMin = null;
+      state.strikeMax = null;
+      state.chainMin = null;
+      state.chainMax = null;
+      state.windowTicker = "";
+      state.heatmap = null;
+    }
     const [stock, expirationsPayload] = await Promise.all([
       api(`/api/stock?ticker=${encodeURIComponent(symbol)}`),
       api(`/api/options?ticker=${encodeURIComponent(symbol)}`),
@@ -816,6 +875,37 @@ function openHelp(key) {
   els.helpTitle.textContent = copy.title;
   els.helpBody.textContent = copy.body;
   els.helpModal.showModal();
+}
+
+function openCellDetail(rowIndex, colIndex) {
+  const grid = state.heatmap;
+  const option = selectedOption();
+  if (!grid || !option) return;
+  const price = grid.rows[rowIndex];
+  const column = grid.columns[colIndex];
+  const cell = grid.cells[rowIndex]?.[colIndex];
+  if (price == null || !column || !cell) return;
+  const dateLabel = Calc.formatDateLabel(column.date, Calc.todayISO(), state.selectedExpiry);
+  const prettyDate = column.date === Calc.todayISO()
+    ? "Now"
+    : column.date === state.selectedExpiry
+      ? `Expiry ${Calc.formatLongDate(state.selectedExpiry)}`
+      : Calc.formatLongDate(column.date);
+  els.cellModalTitle.textContent = `${state.info.symbol} at ${Calc.money(price, price >= 100 ? 0 : 2)}`;
+  els.cellModalBody.innerHTML = [
+    fact("When", prettyDate === "Now" ? "Now" : prettyDate),
+    fact("Column", dateLabel),
+    fact("Option", `${Calc.money(option.strike)} ${state.right === "call" ? "Call" : "Put"}`),
+    fact("Paid", Calc.money(grid.premium)),
+    fact("Value", cell.value != null ? Calc.money(cell.value) : "—"),
+    fact("P/L", Calc.formatPct(cell.pct)),
+    fact("Multiple", Calc.formatMultiple(cell.multiple)),
+  ].join("");
+  els.cellModal.showModal();
+}
+
+function fact(label, value) {
+  return `<div><dt>${label}</dt><dd>${value}</dd></div>`;
 }
 
 renderChips();
@@ -954,7 +1044,28 @@ els.modePct.addEventListener("click", () => {
   syncUrl({ replace: true });
 });
 
+els.heatmap.addEventListener("click", (event) => {
+  const cell = event.target.closest(".cell.heat");
+  if (!cell) return;
+  openCellDetail(Number(cell.dataset.row), Number(cell.dataset.col));
+});
+
+els.copyLink.addEventListener("click", async () => {
+  const url = `${location.origin}${buildShareUrl()}`;
+  try {
+    await navigator.clipboard.writeText(url);
+    toast("Link copied");
+    setTimeout(() => toast(""), 1400);
+  } catch {
+    toast(url);
+  }
+});
+
 els.helpClose.addEventListener("click", () => els.helpModal.close());
+els.cellModalClose.addEventListener("click", () => els.cellModal.close());
+els.cellModal.addEventListener("click", (event) => {
+  if (event.target === els.cellModal) els.cellModal.close();
+});
 els.helpModal.addEventListener("click", (event) => {
   if (event.target === els.helpModal) els.helpModal.close();
 });

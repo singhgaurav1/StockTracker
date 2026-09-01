@@ -95,9 +95,10 @@
           </div>
           <div class="results-actions">
             <div class="segmented mini" role="tablist" aria-label="Display mode">
-              <button type="button" id="mode-multiple" class="active">Multiple</button>
-              <button type="button" id="mode-pct">%</button>
+              <button type="button" id="mode-multiple">Multiple</button>
+              <button type="button" id="mode-pct" class="active">%</button>
             </div>
+            <button type="button" class="text-btn" id="copy-link">Copy link</button>
             <button type="button" class="text-btn" id="back-trade">Edit</button>
           </div>
         </header>
@@ -131,6 +132,12 @@
         <h3 id="help-title"></h3>
         <p id="help-body"></p>
         <button type="button" class="primary" id="help-close">Got it</button>
+      </dialog>
+
+      <dialog id="cell-modal" class="help-modal">
+        <h3 id="cell-modal-title"></h3>
+        <dl id="cell-modal-body" class="cell-facts"></dl>
+        <button type="button" class="primary" id="cell-modal-close">Close</button>
       </dialog>
 
       <p id="status" class="toast" hidden></p>

@@ -359,7 +359,9 @@ export function buildHeatmap({
     columns,
     rows,
     cells,
-    spotRow: rows[nearestIndex(rows, spot)],
+    spotRow: spot >= Math.min(strikeMin, strikeMax) && spot <= Math.max(strikeMin, strikeMax)
+      ? rows[nearestIndex(rows, spot)]
+      : null,
     strikeRow: rows.includes(strike) ? strike : null,
   };
 }
@@ -384,9 +386,16 @@ export function formatMultiple(value) {
 export function heatColor(multiple, pct) {
   const score = multiple != null ? multiple - 1 : pct != null ? pct / 100 : 0;
   const intensity = clamp(Math.abs(score) / (multiple != null ? 1.5 : 2), 0, 1);
-  if (score > 0.02) return `rgba(61, 220, 145, ${0.18 + intensity * 0.72})`;
-  if (score < -0.02) return `rgba(255, 107, 107, ${0.18 + intensity * 0.72})`;
+  if (score > 0.02) return `rgba(14, 92, 62, ${0.45 + intensity * 0.4})`;
+  if (score < -0.02) return `rgba(176, 52, 58, ${0.38 + intensity * 0.45})`;
   return "rgba(232, 238, 246, 0.08)";
+}
+
+export function heatTextColor(multiple, pct) {
+  const score = multiple != null ? multiple - 1 : pct != null ? pct / 100 : 0;
+  if (score > 0.02) return "#e8fff3";
+  if (score < -0.02) return "#ffe8e8";
+  return "var(--text)";
 }
 
 export function compactNumber(value) {

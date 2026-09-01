@@ -99,6 +99,25 @@ test("heatmap rows stay within the requested strike window", () => {
   assert.equal(grid.premium > 0, true);
 });
 
+test("spot highlight is omitted when current price is outside the window", () => {
+  const option = { strike: 200, lastPrice: 4, bid: 3.8, ask: 4.2, impliedVolatility: 30 };
+  const grid = Calc.buildHeatmap({
+    spot: 100,
+    option,
+    isCall: true,
+    expiry: "2026-10-16",
+    today: "2026-09-01",
+    term: [{ date: "2026-10-16", iv: 30, atmIv: 27 }],
+    strikeMin: 180,
+    strikeMax: 400,
+    maxRows: 8,
+    maxCols: 4,
+    strikes: [80, 100, 180, 200, 220],
+  });
+  assert.equal(grid.spotRow, null);
+  assert.equal(grid.strikeRow, 200);
+});
+
 test("heatmap covers prices beyond listed strikes up to the window max", () => {
   const option = { strike: 100, lastPrice: 4, bid: 3.8, ask: 4.2, impliedVolatility: 30 };
   const grid = Calc.buildHeatmap({
