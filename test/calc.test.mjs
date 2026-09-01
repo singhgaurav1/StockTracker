@@ -2,6 +2,20 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as Calc from "../public/calc.js";
 
+test("default strike window uses integers", () => {
+  const window = Calc.defaultStrikeWindow(325.67, [300, 305, 310, 320, 330, 350], 30, 0.05, 320);
+  assert.equal(Number.isInteger(window.minStrike), true);
+  assert.equal(Number.isInteger(window.maxStrike), true);
+  assert.equal(Number.isInteger(window.chainMin), true);
+  assert.equal(Number.isInteger(window.chainMax), true);
+});
+
+test("chart dates parse full timestamps without showing Invalid Date", () => {
+  assert.match(Calc.formatLongDate("2026-06-15T13:30:00.000Z"), /Jun 15, 2026/);
+  assert.match(Calc.formatLongDate("2026-06-15"), /Jun 15, 2026/);
+  assert.equal(Calc.formatLongDate("not-a-date"), "");
+});
+
 test("default strike window uses IV with wider guardrails", () => {
   const strikes = [80, 90, 100, 110, 120];
   const short = Calc.defaultStrikeWindow(100, strikes, 30, 7 / 365.25, 100);

@@ -307,12 +307,7 @@ function chartHeight() {
 }
 
 function formatChartDate(isoDate) {
-  return new Date(`${isoDate}T00:00:00Z`).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    timeZone: "UTC",
-  });
+  return Calc.formatLongDate(isoDate) || "";
 }
 
 function renderChart() {
@@ -417,10 +412,13 @@ function bindChartInteraction(plot, coords, formatValue) {
     dot.style.background = lineColor;
     tooltip.hidden = false;
     tooltip.innerHTML = `<strong>${formatChartDate(coord.point.date)}</strong>${formatValue(coord.point.value)}`;
-    const flip = leftPct > 72;
-    tooltip.style.left = flip ? "auto" : "50%";
-    tooltip.style.right = flip ? "0" : "auto";
-    tooltip.style.transform = flip ? "none" : "translateX(-50%)";
+    const tooltipWidth = tooltip.offsetWidth || 96;
+    const plotWidthPx = rect.width || 1;
+    const xPx = (leftPct / 100) * plotWidthPx;
+    const clampedLeft = Math.min(plotWidthPx - tooltipWidth / 2 - 4, Math.max(tooltipWidth / 2 + 4, xPx));
+    tooltip.style.left = `${clampedLeft}px`;
+    tooltip.style.right = "auto";
+    tooltip.style.transform = "translateX(-50%)";
   };
 
   const hide = () => {
@@ -440,11 +438,9 @@ function bindChartInteraction(plot, coords, formatValue) {
   });
   plot.addEventListener("pointerup", (event) => {
     if (plot.hasPointerCapture(event.pointerId)) plot.releasePointerCapture(event.pointerId);
-    if (event.pointerType !== "mouse") hide();
   });
-  plot.addEventListener("pointerleave", () => {
-    if (!plot.querySelector(":active")) hide();
-  });
+  plot.addEventListener("pointercancel", hide);
+  plot.addEventListener("pointerleave", hide);
 }
 
 function renderPriceChart() {
@@ -602,35 +598,28 @@ function updateBottomBar() {
 
 function syncStrikeWindowInputs() {
   if (state.strikeMin == null || state.strikeMax == null) return;
-  els.strikeMinInput.value = state.strikeMin;
-  els.strikeMaxInput.value = state.strikeMax;
+  els.strikeMinInput.value = Math.round(state.strikeMin);
+  els.strikeMaxInput.value = Math.round(state.strikeMax);
   els.strikeMinRange.min = state.chainMin;
   els.strikeMinRange.max = state.chainMax;
-  els.strikeMinRange.step = typicalStrikeStep();
+  els.strikeMinRange.step = 1;
   els.strikeMaxRange.min = state.chainMin;
   els.strikeMaxRange.max = state.chainMax;
-  els.strikeMaxRange.step = typicalStrikeStep();
+  els.strikeMaxRange.step = 1;
   els.strikeMinRange.value = state.strikeMin;
   els.strikeMaxRange.value = state.strikeMax;
   const span = state.chainMax - state.chainMin || 1;
-  const minPosition = ((state.strikeMin - state.chainMin) / span) * 100;
-  const maxPosition = ((state.strikeMax - state.chainMin) / span) * 100;
-  els.strikeMinRange.parentElement.style.setProperty("--min-position", `${minPosition}%`);
-  els.strikeMinRange.parentElement.style.setProperty("--max-position", `${maxPosition}%`);
-}
-
-function typicalStrikeStep() {
-  const strikes = chainStrikes();
-  if (strikes.length < 2) return 0.5;
-  const step = Calc.typicalStep(strikes);
-  return step >= 1 ? step : 0.5;
+  const minRatio = Calc.clamp((state.strikeMin - state.chainMin) / span, 0, 1);
+  const maxRatio = Calc.clamp((state.strikeMax - state.chainMin) / span, 0, 1);
+  els.strikeMinRange.parentElement.style.setProperty("--min-ratio", String(minRatio));
+  els.strikeMinRange.parentElement.style.setProperty("--max-ratio", String(maxRatio));
 }
 
 function setStrikeWindow(minStrike, maxStrike, { rebuild = true, sync = true } = {}) {
-  const lo = Math.min(minStrike, maxStrike);
-  const hi = Math.max(minStrike, maxStrike);
-  state.strikeMin = Calc.clamp(lo, state.chainMin, state.chainMax);
-  state.strikeMax = Calc.clamp(hi, state.chainMin, state.chainMax);
+  const lo = Math.round(Math.min(minStrike, maxStrike));
+  const hi = Math.round(Math.max(minStrike, maxStrike));
+  state.strikeMin = Math.round(Calc.clamp(lo, state.chainMin, state.chainMax));
+  state.strikeMax = Math.round(Calc.clamp(hi, state.chainMin, state.chainMax));
   if (state.strikeMin > state.strikeMax) {
     state.strikeMin = state.chainMin;
     state.strikeMax = state.chainMax;
@@ -662,8 +651,9 @@ function renderHeatmap() {
   if (!grid) return;
   const option = selectedOption();
   const spot = state.info.currentPrice;
-  els.resultTitle.textContent = `${state.info.symbol} ${Calc.money(option.strike)} ${state.right === "call" ? "Call" : "Put"}`;
-  els.resultSub.textContent = `${state.selectedExpiry} · paid ${Calc.money(grid.premium)}`;
+  const strikeLabel = Number.isInteger(option.strike) ? Calc.money(option.strike, 0) : Calc.money(option.strike);
+  els.resultTitle.textContent = `${state.info.symbol} ${strikeLabel} ${state.right === "call" ? "Call" : "Put"}`;
+  els.resultSub.textContent = `${Calc.formatLongDate(state.selectedExpiry)} · paid ${Calc.money(grid.premium)}`;
 
   const cols = grid.columns.length;
   els.heatmap.style.gridTemplateColumns = `minmax(48px, 14%) repeat(${cols}, minmax(0, 1fr))`;

@@ -71,12 +71,34 @@ export function defaultStrikeWindow(spot, strikes, ivPct, years, selectedStrike)
   minStrike = clamp(minStrike, chainMin, chainMax);
   maxStrike = clamp(maxStrike, chainMin, chainMax);
   if (minStrike > maxStrike) [minStrike, maxStrike] = [maxStrike, minStrike];
+  const roundedMin = Math.max(1, Math.round(minStrike));
+  const roundedMax = Math.max(roundedMin + 1, Math.round(maxStrike));
+  const roundedChainMin = Math.max(1, Math.floor(chainMin));
+  const roundedChainMax = Math.max(roundedChainMin + 1, Math.ceil(chainMax));
   return {
-    minStrike: roundTo(minStrike, 2),
-    maxStrike: roundTo(maxStrike, 2),
-    chainMin: roundTo(chainMin, 2),
-    chainMax: roundTo(chainMax, 2),
+    minStrike: clamp(roundedMin, roundedChainMin, roundedChainMax),
+    maxStrike: clamp(roundedMax, roundedChainMin, roundedChainMax),
+    chainMin: roundedChainMin,
+    chainMax: roundedChainMax,
   };
+}
+
+export function parseDate(value) {
+  if (!value) return null;
+  const raw = String(value);
+  const date = /T/.test(raw) ? new Date(raw) : new Date(`${raw.slice(0, 10)}T00:00:00Z`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+export function formatLongDate(value) {
+  const date = parseDate(value);
+  if (!date) return "";
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
 }
 
 export function tableCapacity(width = 390, height = 800) {
