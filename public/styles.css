@@ -111,6 +111,20 @@ body[data-view="trade"] {
   margin-bottom: 6px;
 }
 
+.section-title {
+  display: block;
+  color: var(--text);
+  font-size: 0.92rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  margin-bottom: 6px;
+}
+
+.chain-head .section-title {
+  font-size: 0.95rem;
+  margin-bottom: 8px;
+}
+
 .search-row, .topbar, .quote-head, .controls, .results-bar, .chart-toolbar {
   display: flex;
   gap: 8px;
@@ -244,9 +258,93 @@ button:disabled {
   font-size: 0.72rem;
 }
 
+.chart-block {
+  min-height: 108px;
+}
+
 .chart-compact {
+  display: flex;
+  gap: 4px;
   height: 88px;
   margin: 0;
+}
+
+.chart-yaxis {
+  width: 42px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 2px 4px 2px 0;
+  font-size: 0.62rem;
+  color: var(--muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.chart-plot {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  touch-action: none;
+}
+
+.chart-plot svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.chart-crosshair {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(232, 238, 246, 0.55);
+  pointer-events: none;
+  transform: translateX(-0.5px);
+}
+
+.chart-dot {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 2px solid #0c1117;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
+.chart-tooltip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+  background: rgba(16, 22, 30, 0.96);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 0.68rem;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.chart-tooltip strong {
+  display: block;
+  font-size: 0.72rem;
+}
+
+.chart-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-align: center;
+  padding: 0 8px;
 }
 
 .chart svg {
@@ -257,6 +355,7 @@ button:disabled {
 
 .chart-caption {
   margin: 4px 0 0;
+  min-height: 18px;
   color: var(--muted);
   font-size: 0.68rem;
 }
@@ -325,6 +424,7 @@ button:disabled {
 .compact-field select {
   min-height: 40px;
   padding: 8px 10px;
+  font-weight: 600;
 }
 
 .segmented.mini {
@@ -336,9 +436,15 @@ button:disabled {
   margin: 0 0 6px;
 }
 
-.chain-head > span {
-  color: var(--muted);
-  font-size: 0.75rem;
+.chain-table th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #10161e;
+  color: var(--text);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
 }
 
 .chain-scroll {
@@ -367,20 +473,10 @@ button:disabled {
   border-bottom: 1px solid var(--line);
 }
 
-.chain-table th {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  background: #10161e;
-  color: var(--muted);
-  font-size: 0.66rem;
-  font-weight: 700;
-}
-
 .th-help {
   background: transparent;
   border: 0;
-  color: var(--muted);
+  color: var(--text);
   padding: 0;
   min-height: auto;
   font-size: inherit;
@@ -708,6 +804,10 @@ button:disabled {
 
   .view-trade {
     padding-bottom: calc(var(--bottom-bar-h) + 16px);
+  }
+
+  .chart-block {
+    min-height: 140px;
   }
 
   .chart-compact {
