@@ -60,23 +60,53 @@ export function defaultStrikeWindow(spot, strikes, ivPct, years, selectedStrike)
   const oneSigmaPct = iv * Math.sqrt(tenor) * 100;
   const halfWindow = clamp(oneSigmaPct * 1.75, 15, 55);
   const unique = [...new Set((strikes ?? []).filter((s) => s > 0))].sort((a, b) => a - b);
-  const chainMin = unique[0] ?? spot * (1 - halfWindow / 100);
-  const chainMax = unique[unique.length - 1] ?? spot * (1 + halfWindow / 100);
-  let minStrike = spot * (1 - halfWindow / 100);
-  let maxStrike = spot * (1 + halfWindow / 100);
+  const listedMin = unique[0] ?? spot * (1 - halfWindow / 100);
+  const listedMax = unique[unique.length - 1] ?? spot * 2;
+  let minStrike = Math.min(listedMin, spot * (1 - halfWindow / 100));
+  let maxStrike = spot * 4;
   if (selectedStrike) {
     minStrike = Math.min(minStrike, selectedStrike * 0.92);
     maxStrike = Math.max(maxStrike, selectedStrike * 1.08);
   }
-  minStrike = clamp(minStrike, chainMin, chainMax);
-  maxStrike = clamp(maxStrike, chainMin, chainMax);
   if (minStrike > maxStrike) [minStrike, maxStrike] = [maxStrike, minStrike];
+  const chainLo = snapToStep(Math.min(listedMin, minStrike), 5, "floor");
+  const chainHi = snapToStep(Math.max(listedMax, maxStrike), 5, "ceil");
+  const windowMin = clamp(snapToStep(minStrike, 5, "round"), chainLo, chainHi);
+  const windowMax = clamp(Math.max(windowMin + 5, snapToStep(maxStrike, 5, "round")), chainLo, chainHi);
   return {
-    minStrike: roundTo(minStrike, 2),
-    maxStrike: roundTo(maxStrike, 2),
-    chainMin: roundTo(chainMin, 2),
-    chainMax: roundTo(chainMax, 2),
+    minStrike: windowMin,
+    maxStrike: windowMax,
+    chainMin: chainLo,
+    chainMax: chainHi,
   };
+}
+
+export function snapToStep(value, step = 5, mode = "round") {
+  if (!Number.isFinite(value) || step <= 0) return step;
+  const snapped = mode === "floor"
+    ? Math.floor(value / step) * step
+    : mode === "ceil"
+      ? Math.ceil(value / step) * step
+      : Math.round(value / step) * step;
+  return Math.max(step, snapped);
+}
+
+export function parseDate(value) {
+  if (!value) return null;
+  const raw = String(value);
+  const date = /T/.test(raw) ? new Date(raw) : new Date(`${raw.slice(0, 10)}T00:00:00Z`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+export function formatLongDate(value) {
+  const date = parseDate(value);
+  if (!date) return "";
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
 }
 
 export function tableCapacity(width = 390, height = 800) {
@@ -240,25 +270,25 @@ export function buildPriceRows({ spot, strikes, strikeMin, strikeMax, maxRows, s
   const step = typicalStep(unique);
   let levels = unique.filter((strike) => strike >= lo && strike <= hi);
 
-  const extras = [selectedStrike, unique[nearestIndex(unique, spot)]].filter((value) => Number.isFinite(value) && value > 0);
+  const extras = [selectedStrike, spot, unique[nearestIndex(unique, spot)]].filter((value) => Number.isFinite(value) && value > 0);
   for (const extra of extras) {
     if (extra >= lo && extra <= hi && !levels.includes(extra)) levels.push(extra);
   }
 
-  if (levels.length < 5) {
-    const synthetic = [];
-    const usedStep = step || niceStep((hi - lo) / Math.max(maxRows - 1, 1));
-    const start = Math.max(usedStep, Math.floor(lo / usedStep) * usedStep);
-    for (let price = start; price <= hi + usedStep / 4; price = roundTo(price + usedStep, 4)) {
-      if (price > 0) synthetic.push(roundTo(price, 2));
-    }
-    levels = [...new Set([...levels, ...synthetic])].sort((a, b) => a - b);
-    levels = levels.filter((price) => price >= lo * 0.98 && price <= hi * 1.02);
+  const usedStep = niceStep((hi - lo) / Math.max(maxRows - 1, 1)) || step || 5;
+  const synthetic = [];
+  const start = Math.max(usedStep, Math.floor(lo / usedStep) * usedStep);
+  for (let price = start; price <= hi + usedStep / 4; price = roundTo(price + usedStep, 4)) {
+    if (price > 0) synthetic.push(roundTo(price, 2));
   }
+  levels = [...new Set([...levels, ...synthetic])].sort((a, b) => a - b);
+  levels = levels.filter((price) => price >= lo * 0.98 && price <= hi * 1.02);
 
   levels.sort((a, b) => a - b);
   if (levels.length > maxRows) {
     const keep = new Set(extras.filter((v) => v >= lo && v <= hi));
+    keep.add(levels[0]);
+    keep.add(levels[levels.length - 1]);
     const remainingSlots = Math.max(3, maxRows - keep.size);
     const others = levels.filter((price) => !keep.has(price));
     const picked = [];
@@ -329,7 +359,9 @@ export function buildHeatmap({
     columns,
     rows,
     cells,
-    spotRow: rows[nearestIndex(rows, spot)],
+    spotRow: spot >= Math.min(strikeMin, strikeMax) && spot <= Math.max(strikeMin, strikeMax)
+      ? rows[nearestIndex(rows, spot)]
+      : null,
     strikeRow: rows.includes(strike) ? strike : null,
   };
 }
@@ -337,10 +369,11 @@ export function buildHeatmap({
 export function formatPct(value) {
   if (value == null || !Number.isFinite(value)) return "—";
   if (value <= -99.5) return "−100%";
-  const rounded = Math.abs(value) >= 100 ? value.toFixed(0) : value.toFixed(0);
-  if (value > 0) return `+${rounded}%`;
-  if (value < 0) return `−${Math.abs(Number(rounded))}%`;
-  return "0%";
+  if (value === 0) return "0%";
+  const abs = Math.abs(value);
+  const sign = value > 0 ? "+" : "−";
+  if (abs >= 1000) return `${sign}${(abs / 1000).toFixed(abs >= 10000 ? 0 : 1)}k%`;
+  return `${sign}${abs.toFixed(0)}%`;
 }
 
 export function formatMultiple(value) {
@@ -353,10 +386,22 @@ export function formatMultiple(value) {
 
 export function heatColor(multiple, pct) {
   const score = multiple != null ? multiple - 1 : pct != null ? pct / 100 : 0;
-  const intensity = clamp(Math.abs(score) / (multiple != null ? 1.5 : 2), 0, 1);
-  if (score > 0.02) return `rgba(61, 220, 145, ${0.18 + intensity * 0.72})`;
-  if (score < -0.02) return `rgba(255, 107, 107, ${0.18 + intensity * 0.72})`;
-  return "rgba(232, 238, 246, 0.08)";
+  if (score > 0.02) {
+    const t = clamp(Math.log10(1 + score) / Math.log10(5), 0, 1);
+    return `hsl(158, ${48 + t * 10}%, ${16 + t * 12}%)`;
+  }
+  if (score < -0.02) {
+    const t = clamp(Math.log10(1 + Math.abs(score)) / Math.log10(3), 0, 1);
+    return `hsl(4, ${50 + t * 10}%, ${18 + t * 10}%)`;
+  }
+  return "#18222d";
+}
+
+export function heatTextColor(multiple, pct) {
+  const score = multiple != null ? multiple - 1 : pct != null ? pct / 100 : 0;
+  if (score > 0.02) return "#f2fff8";
+  if (score < -0.02) return "#fff1f0";
+  return "#d5deea";
 }
 
 export function compactNumber(value) {

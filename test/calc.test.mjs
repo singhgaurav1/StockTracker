@@ -2,6 +2,34 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as Calc from "../public/calc.js";
 
+test("default strike window max is 4x spot even when the chain is narrower", () => {
+  const window = Calc.defaultStrikeWindow(100, [80, 90, 100, 110, 120], 30, 0.05, 100);
+  assert.equal(window.maxStrike, 400);
+  assert.equal(window.chainMax >= 400, true);
+});
+
+test("default strike window uses integers", () => {
+  const window = Calc.defaultStrikeWindow(325.67, [300, 305, 310, 320, 330, 350], 30, 0.05, 320);
+  assert.equal(Number.isInteger(window.minStrike), true);
+  assert.equal(Number.isInteger(window.maxStrike), true);
+  assert.equal(Number.isInteger(window.chainMin), true);
+  assert.equal(Number.isInteger(window.chainMax), true);
+  assert.equal(window.minStrike % 5, 0);
+  assert.equal(window.maxStrike % 5, 0);
+});
+
+test("snapToStep rounds strike window values to fives", () => {
+  assert.equal(Calc.snapToStep(179, 5), 180);
+  assert.equal(Calc.snapToStep(177, 5, "floor"), 175);
+  assert.equal(Calc.snapToStep(751, 5, "ceil"), 755);
+});
+
+test("chart dates parse full timestamps without showing Invalid Date", () => {
+  assert.match(Calc.formatLongDate("2026-06-15T13:30:00.000Z"), /Jun 15, 2026/);
+  assert.match(Calc.formatLongDate("2026-06-15"), /Jun 15, 2026/);
+  assert.equal(Calc.formatLongDate("not-a-date"), "");
+});
+
 test("default strike window uses IV with wider guardrails", () => {
   const strikes = [80, 90, 100, 110, 120];
   const short = Calc.defaultStrikeWindow(100, strikes, 30, 7 / 365.25, 100);
@@ -69,6 +97,51 @@ test("heatmap rows stay within the requested strike window", () => {
   assert.equal(grid.columns.every((column) => column.ivPct != null), true);
   assert.equal(grid.cells[0].length, grid.columns.length);
   assert.equal(grid.premium > 0, true);
+});
+
+test("spot highlight is omitted when current price is outside the window", () => {
+  const option = { strike: 200, lastPrice: 4, bid: 3.8, ask: 4.2, impliedVolatility: 30 };
+  const grid = Calc.buildHeatmap({
+    spot: 100,
+    option,
+    isCall: true,
+    expiry: "2026-10-16",
+    today: "2026-09-01",
+    term: [{ date: "2026-10-16", iv: 30, atmIv: 27 }],
+    strikeMin: 180,
+    strikeMax: 400,
+    maxRows: 8,
+    maxCols: 4,
+    strikes: [80, 100, 180, 200, 220],
+  });
+  assert.equal(grid.spotRow, null);
+  assert.equal(grid.strikeRow, 200);
+});
+
+test("heatmap covers prices beyond listed strikes up to the window max", () => {
+  const option = { strike: 100, lastPrice: 4, bid: 3.8, ask: 4.2, impliedVolatility: 30 };
+  const grid = Calc.buildHeatmap({
+    spot: 100,
+    option,
+    isCall: true,
+    expiry: "2026-10-16",
+    today: "2026-09-01",
+    term: [{ date: "2026-10-16", iv: 30, atmIv: 27 }],
+    strikeMin: 50,
+    strikeMax: 400,
+    maxRows: 12,
+    maxCols: 4,
+    strikes: [80, 90, 100, 110, 120],
+  });
+  assert.equal(Math.max(...grid.rows) >= 380, true);
+  assert.equal(Math.min(...grid.rows) <= 60, true);
+});
+
+test("percentage labels stay compact for large moves", () => {
+  assert.equal(Calc.formatPct(12), "+12%");
+  assert.equal(Calc.formatPct(120), "+120%");
+  assert.equal(Calc.formatPct(1200), "+1.2k%");
+  assert.equal(Calc.formatPct(-100), "−100%");
 });
 
 test("bar widths scale to the chain maximum", () => {
