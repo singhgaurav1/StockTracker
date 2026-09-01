@@ -853,19 +853,28 @@ button:disabled {
 
 .cell.rowhead small {
   color: var(--muted);
-  font-weight: 500;
+  font-weight: 600;
+  font-size: 0.62rem;
 }
 
 .cell.rowhead.spot {
-  box-shadow: inset 3px 0 0 var(--accent-2);
+  box-shadow: inset 4px 0 0 var(--accent-2);
+}
+
+.cell.rowhead.spot small {
+  color: var(--accent-2);
 }
 
 .cell.rowhead.strike {
-  box-shadow: inset 3px 0 0 var(--accent);
+  box-shadow: inset 4px 0 0 var(--accent);
+}
+
+.cell.rowhead.strike small {
+  color: var(--accent);
 }
 
 .cell.rowhead.spot.strike {
-  box-shadow: inset 3px 0 0 var(--accent), inset 6px 0 0 var(--accent-2);
+  box-shadow: inset 4px 0 0 var(--accent), inset 8px 0 0 var(--accent-2);
 }
 
 .hint {

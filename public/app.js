@@ -674,7 +674,13 @@ function renderHeatmap() {
       price === grid.spotRow ? "spot" : "",
       price === grid.strikeRow ? "strike" : "",
     ].join(" ");
-    const marker = price === grid.strikeRow ? "Strike" : price === grid.spotRow ? "Now" : `${delta >= 0 ? "+" : "−"}${Math.abs(delta).toFixed(0)}%`;
+    const marker = price === grid.strikeRow && price === grid.spotRow
+      ? "Strike · now"
+      : price === grid.strikeRow
+        ? "Strike"
+        : price === grid.spotRow
+          ? "Now"
+          : `${delta >= 0 ? "+" : "−"}${Math.abs(delta).toFixed(0)}%`;
     const header = `<div class="${rowClass}">${Calc.money(price, price >= 100 ? 0 : 2)}<small>${marker}</small></div>`;
     const cells = grid.cells[rowIndex].map((cell) => {
       const text = state.display === "pct" ? Calc.formatPct(cell.pct) : Calc.formatMultiple(cell.multiple);
