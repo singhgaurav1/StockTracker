@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0c1117" />
+    <title>Stock Tracker</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <section id="view-pick" class="view view-pick">
+        <header class="brand">
+          <p class="eyebrow">Stock Tracker</p>
+          <h1>See an option’s payoff across prices and time.</h1>
+          <p class="lede">Pick a stock, choose an expiration and a call or put, then calculate a scenario table that fits on your screen.</p>
+        </header>
+        <form id="ticker-form" class="search-card">
+          <label for="ticker-input">Stock ticker</label>
+          <div class="search-row">
+            <input id="ticker-input" name="ticker" inputmode="latin" autocomplete="off" spellcheck="false" maxlength="10" placeholder="AAPL" />
+            <button type="submit" id="lookup-btn">Look up</button>
+          </div>
+        </form>
+        <div class="chips" id="popular-chips"></div>
+        <p id="pick-error" class="banner error" hidden></p>
+      </section>
+
+      <section id="view-trade" class="view" hidden>
+        <header class="topbar">
+          <button type="button" class="text-btn" id="back-pick">Stocks</button>
+          <strong id="trade-symbol"></strong>
+          <button type="button" class="text-btn" id="refresh-btn">Refresh</button>
+        </header>
+
+        <article class="quote-card">
+          <div class="quote-head">
+            <div>
+              <h2 id="company-name"></h2>
+              <div id="stock-price" class="price"></div>
+              <div id="price-change" class="change"></div>
+            </div>
+            <div id="hv-pill" class="pill">HV —</div>
+          </div>
+          <div id="price-chart" class="chart" aria-hidden="true"></div>
+          <div class="periods" id="period-toggle">
+            <button type="button" data-period="1m">1M</button>
+            <button type="button" data-period="3m" class="active">3M</button>
+            <button type="button" data-period="6m">6M</button>
+            <button type="button" data-period="1y">1Y</button>
+          </div>
+          <dl class="stats" id="stock-stats"></dl>
+        </article>
+
+        <article class="trade-card">
+          <h3>Option</h3>
+          <label class="field">
+            <span>Expiration</span>
+            <select id="expiry-select"></select>
+          </label>
+          <div class="segmented" role="tablist" aria-label="Option type">
+            <button type="button" id="type-call" class="active">Call</button>
+            <button type="button" id="type-put">Put</button>
+          </div>
+          <label class="field">
+            <span>Strike</span>
+            <select id="strike-select"></select>
+          </label>
+          <dl class="option-meta" id="option-meta"></dl>
+          <p id="trade-error" class="banner error" hidden></p>
+          <button type="button" class="primary" id="calculate-btn">Calculate</button>
+        </article>
+      </section>
+
+      <section id="view-results" class="view view-results" hidden>
+        <header class="results-bar">
+          <button type="button" class="text-btn" id="back-trade">Edit</button>
+          <div class="results-summary">
+            <strong id="result-title"></strong>
+            <span id="result-sub"></span>
+          </div>
+        </header>
+        <div class="controls">
+          <label class="range-ctl">
+            <span>Strike window <strong id="range-label">±15%</strong></span>
+            <input id="range-input" type="range" min="5" max="50" step="1" value="15" />
+          </label>
+          <div class="segmented mini" role="tablist" aria-label="Display mode">
+            <button type="button" id="mode-multiple" class="active">Multiple</button>
+            <button type="button" id="mode-pct">%</button>
+          </div>
+        </div>
+        <p id="result-iv" class="iv-note"></p>
+        <div id="heatmap" class="heatmap" role="table" aria-label="Option scenario table"></div>
+        <p class="hint">Rows are future stock prices. Columns are dates until expiry. Each cell is the estimated value of the selected option versus the premium paid.</p>
+      </section>
+
+      <p id="status" class="toast" hidden></p>
+    </div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
