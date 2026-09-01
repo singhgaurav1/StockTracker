@@ -1,3 +1,5 @@
+import { impliedVolPct, optionPremium, usableIv, yearsToExpiry } from "./vol";
+
 const YAHOO_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
@@ -220,16 +222,28 @@ function categorizeMoneyness(strike: number, currentPrice: number, isCall: boole
   return strike > currentPrice ? "ITM" : "OTM";
 }
 
-function mapOption(raw: Record<string, unknown>, currentPrice: number, isCall: boolean): OptionRow {
+function mapOption(
+  raw: Record<string, unknown>,
+  currentPrice: number,
+  isCall: boolean,
+  years: number,
+): OptionRow {
   const strike = Number(raw.strike ?? 0);
+  const lastPrice = round(Number(raw.lastPrice ?? 0));
+  const bid = round(Number(raw.bid ?? 0));
+  const ask = round(Number(raw.ask ?? 0));
+  const premium = optionPremium(bid, ask, lastPrice);
+  const yahooIv = Number(raw.impliedVolatility ?? 0) * 100;
+  const impliedVolatility =
+    usableIv(yahooIv) ?? impliedVolPct(premium, currentPrice, strike, years, isCall) ?? 0;
   return {
     strike: round(strike),
-    lastPrice: round(Number(raw.lastPrice ?? 0)),
-    bid: round(Number(raw.bid ?? 0)),
-    ask: round(Number(raw.ask ?? 0)),
+    lastPrice,
+    bid,
+    ask,
     volume: Number(raw.volume ?? 0),
     openInterest: Number(raw.openInterest ?? 0),
-    impliedVolatility: round(Number(raw.impliedVolatility ?? 0) * 100),
+    impliedVolatility: round(impliedVolatility),
     moneyness: categorizeMoneyness(strike, currentPrice, isCall),
   };
 }
@@ -243,8 +257,17 @@ function expiryUnix(date: string): number {
 }
 
 function sanitizeIv(iv: number): number | null {
-  if (!Number.isFinite(iv) || iv < 1 || iv > 250) return null;
+  if (!Number.isFinite(iv) || iv < 5 || iv > 250) return null;
   return iv;
+}
+
+function fillMissingIv(rows: OptionRow[]): OptionRow[] {
+  const withIv = rows.filter((row) => sanitizeIv(row.impliedVolatility) != null);
+  if (!withIv.length) return rows;
+  return rows.map((row) => {
+    if (sanitizeIv(row.impliedVolatility) != null) return row;
+    return { ...row, impliedVolatility: interpolateStrikeIv(withIv, row.strike) ?? row.impliedVolatility };
+  });
 }
 
 function interpolateStrikeIv(rows: OptionRow[], strike: number): number | null {
@@ -415,8 +438,12 @@ function summarizeChain(chain: YahooOptionsResult) {
   const expirationDates = expirationDateList(chain);
   const currentPrice = Number(chain.quote?.regularMarketPrice ?? chain.quote?.regularMarketPreviousClose ?? 0);
   const optionSet = chain.options?.[0];
-  const calls = (optionSet?.calls ?? []).map((row) => mapOption(row, currentPrice, true));
-  const puts = (optionSet?.puts ?? []).map((row) => mapOption(row, currentPrice, false));
+  const expiryDate = optionSet?.expirationDate
+    ? new Date(optionSet.expirationDate * 1000).toISOString().slice(0, 10)
+    : expirationDates[0];
+  const years = yearsToExpiry(expiryDate ?? new Date().toISOString().slice(0, 10));
+  const calls = fillMissingIv((optionSet?.calls ?? []).map((row) => mapOption(row, currentPrice, true, years)));
+  const puts = fillMissingIv((optionSet?.puts ?? []).map((row) => mapOption(row, currentPrice, false, years)));
   const avgCallIv = atmIv(calls);
   const avgPutIv = atmIv(puts);
   return {
@@ -452,7 +479,7 @@ async function getIvTerm(url: URL, ctx: ExecutionContext) {
     throw new Error("Invalid strike.");
   }
 
-  const cacheUrl = `https://stock-tracker.internal/iv-term/${ticker}/${expiry}/${strike}/${right}`;
+  const cacheUrl = `https://stock-tracker.internal/iv-term/v2/${ticker}/${expiry}/${strike}/${right}`;
   return cachedJson(cacheUrl, ctx, async () => {
     const listed = await fetchYahooOptions(ticker, null, ctx);
     const expirationDates = expirationDateList(listed);
