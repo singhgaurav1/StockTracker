@@ -3,10 +3,10 @@ import assert from "node:assert/strict";
 import * as Calc from "../public/calc.js";
 
 test("default range uses IV with guardrails", () => {
-  assert.equal(Calc.defaultRangePct(30, 7 / 365.25) >= 8, true);
+  assert.equal(Calc.defaultRangePct(30, 7 / 365.25) >= 10, true);
   assert.equal(Calc.defaultRangePct(30, 1) <= 40, true);
   assert.equal(Calc.defaultRangePct(80, 1), 40);
-  assert.equal(Calc.defaultRangePct(5, 7 / 365.25), 8);
+  assert.equal(Calc.defaultRangePct(5, 7 / 365.25), 10);
 });
 
 test("weekly columns for short-dated options", () => {

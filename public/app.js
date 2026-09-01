@@ -82,6 +82,20 @@ async function api(path) {
   return data;
 }
 
+function pickDefaultExpiry(dates) {
+  const today = Calc.todayISO();
+  const ranked = dates.map((date) => ({ date, dte: Calc.daysBetween(today, date) }));
+  return ranked.find((row) => row.dte >= 14)?.date
+    ?? ranked.find((row) => row.dte >= 7)?.date
+    ?? dates[0]
+    ?? "";
+}
+
+function quotePair(bid, ask) {
+  if (!(bid > 0) && !(ask > 0)) return "—";
+  return `${Calc.money(bid)} / ${Calc.money(ask)}`;
+}
+
 function currentOptions() {
   return state.right === "put" ? state.puts : state.calls;
 }
@@ -220,7 +234,7 @@ function renderOptionMeta() {
   const premium = Calc.optionPremium(option);
   els.optionMeta.innerHTML = [
     stat("Premium", Calc.money(premium)),
-    stat("Bid / ask", `${Calc.money(option.bid)} / ${Calc.money(option.ask)}`),
+    stat("Bid / ask", quotePair(option.bid, option.ask)),
     stat("IV", `${option.impliedVolatility.toFixed(1)}%`),
     stat("Open interest", Calc.compactNumber(option.openInterest)),
   ].join("");
@@ -312,7 +326,7 @@ async function loadTicker(ticker) {
     state.info = stock.info;
     state.history = stock.history ?? [];
     state.expirations = expirationsPayload.expirationDates ?? [];
-    state.selectedExpiry = state.expirations[0] ?? "";
+    state.selectedExpiry = pickDefaultExpiry(state.expirations);
     state.selectedStrike = null;
     state.heatmap = null;
     els.input.value = symbol;

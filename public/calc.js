@@ -58,7 +58,7 @@ export function defaultRangePct(ivPct, years) {
   const iv = Math.max(sanitizeIv(ivPct) ?? 20, 10) / 100;
   const tenor = Math.max(years, 2 / 365.25);
   const oneSigmaPct = iv * Math.sqrt(tenor) * 100;
-  return Math.round(clamp(oneSigmaPct * 1.5, 8, 40));
+  return Math.round(clamp(oneSigmaPct * 1.5, 10, 40));
 }
 
 export function tableCapacity(width = 390, height = 800) {
@@ -82,7 +82,7 @@ export function buildDateColumns(today, expiry, maxCols = 6) {
 
   const dates = [today];
   let cursor = addDays(today, step);
-  while (daysBetween(cursor, expiry) > Math.min(3, Math.floor(step / 2)) && dates.length < 24) {
+  while (daysBetween(cursor, expiry) > 2 && dates.length < 24) {
     dates.push(cursor);
     cursor = addDays(cursor, step);
   }
