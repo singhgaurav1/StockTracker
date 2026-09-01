@@ -369,10 +369,11 @@ export function buildHeatmap({
 export function formatPct(value) {
   if (value == null || !Number.isFinite(value)) return "—";
   if (value <= -99.5) return "−100%";
-  const rounded = Math.abs(value) >= 100 ? value.toFixed(0) : value.toFixed(0);
-  if (value > 0) return `+${rounded}%`;
-  if (value < 0) return `−${Math.abs(Number(rounded))}%`;
-  return "0%";
+  if (value === 0) return "0%";
+  const abs = Math.abs(value);
+  const sign = value > 0 ? "+" : "−";
+  if (abs >= 1000) return `${sign}${(abs / 1000).toFixed(abs >= 10000 ? 0 : 1)}k%`;
+  return `${sign}${abs.toFixed(0)}%`;
 }
 
 export function formatMultiple(value) {
@@ -385,17 +386,22 @@ export function formatMultiple(value) {
 
 export function heatColor(multiple, pct) {
   const score = multiple != null ? multiple - 1 : pct != null ? pct / 100 : 0;
-  const intensity = clamp(Math.abs(score) / (multiple != null ? 1.5 : 2), 0, 1);
-  if (score > 0.02) return `rgba(14, 92, 62, ${0.45 + intensity * 0.4})`;
-  if (score < -0.02) return `rgba(176, 52, 58, ${0.38 + intensity * 0.45})`;
-  return "rgba(232, 238, 246, 0.08)";
+  if (score > 0.02) {
+    const t = clamp(Math.log10(1 + score) / Math.log10(5), 0, 1);
+    return `linear-gradient(180deg, hsl(158 ${58 + t * 18}% ${24 + t * 16}%), hsl(152 ${50 + t * 14}% ${14 + t * 10}%))`;
+  }
+  if (score < -0.02) {
+    const t = clamp(Math.log10(1 + Math.abs(score)) / Math.log10(3), 0, 1);
+    return `linear-gradient(180deg, hsl(6 ${58 + t * 16}% ${28 + t * 10}%), hsl(355 ${52 + t * 12}% ${16 + t * 8}%))`;
+  }
+  return "linear-gradient(180deg, #1a2430, #141c26)";
 }
 
 export function heatTextColor(multiple, pct) {
   const score = multiple != null ? multiple - 1 : pct != null ? pct / 100 : 0;
-  if (score > 0.02) return "#e8fff3";
-  if (score < -0.02) return "#ffe8e8";
-  return "var(--text)";
+  if (score > 0.02) return "#f2fff8";
+  if (score < -0.02) return "#fff1f0";
+  return "#d5deea";
 }
 
 export function compactNumber(value) {

@@ -736,7 +736,8 @@ function renderHeatmap() {
       const text = state.display === "pct" ? Calc.formatPct(cell.pct) : Calc.formatMultiple(cell.multiple);
       const bg = Calc.heatColor(cell.multiple, cell.pct);
       const fg = Calc.heatTextColor(cell.multiple, cell.pct);
-      return `<button type="button" class="cell heat" data-row="${rowIndex}" data-col="${colIndex}" style="background:${bg};color:${fg}">${text}</button>`;
+      const hot = (cell.pct ?? 0) >= 100 ? "hot" : (cell.pct ?? 0) <= -50 ? "cold" : "";
+      return `<button type="button" class="cell heat ${hot}" data-row="${rowIndex}" data-col="${colIndex}" style="background:${bg};color:${fg}">${text}</button>`;
     });
     return [header, ...cells];
   });

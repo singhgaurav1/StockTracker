@@ -137,6 +137,13 @@ test("heatmap covers prices beyond listed strikes up to the window max", () => {
   assert.equal(Math.min(...grid.rows) <= 60, true);
 });
 
+test("percentage labels stay compact for large moves", () => {
+  assert.equal(Calc.formatPct(12), "+12%");
+  assert.equal(Calc.formatPct(120), "+120%");
+  assert.equal(Calc.formatPct(1200), "+1.2k%");
+  assert.equal(Calc.formatPct(-100), "−100%");
+});
+
 test("bar widths scale to the chain maximum", () => {
   assert.equal(Calc.barWidthPct(0, 100), 0);
   assert.equal(Calc.barWidthPct(50, 100), 50);
