@@ -251,8 +251,13 @@ async function getStock(url: URL, ctx: ExecutionContext) {
     const closes = quote.close ?? [];
     const volatility = calculateHistoricalVolatility(closes);
     const latestClose = [...closes].reverse().find((value) => value != null) ?? 0;
+    const priorClose = [...closes].reverse().filter((value) => value != null)[1];
     const currentPrice = Number(meta.regularMarketPrice ?? latestClose);
-    const previousClose = Number(meta.chartPreviousClose ?? meta.previousClose ?? latestClose);
+    const changePct = Number(meta.regularMarketChangePercent);
+    const previousClose =
+      Number.isFinite(changePct) && changePct !== 0
+        ? currentPrice / (1 + changePct / 100)
+        : Number(priorClose ?? latestClose);
     const history: HistoryBar[] = timestamps.map((ts, index) => ({
       date: new Date(ts * 1000).toISOString(),
       open: round(Number(quote.open?.[index] ?? 0)),
@@ -332,8 +337,8 @@ async function getOptions(url: URL, ctx: ExecutionContext) {
     const optionSet = chain.options?.[0];
     const calls = (optionSet?.calls ?? []).map((row) => mapOption(row, currentPrice, true));
     const puts = (optionSet?.puts ?? []).map((row) => mapOption(row, currentPrice, false));
-    const atmCalls = calls.filter((row) => row.moneyness === "ATM");
-    const atmPuts = puts.filter((row) => row.moneyness === "ATM");
+    const atmCalls = calls.filter((row) => row.moneyness === "ATM" && row.impliedVolatility > 0.5);
+    const atmPuts = puts.filter((row) => row.moneyness === "ATM" && row.impliedVolatility > 0.5);
     const avgCallIv = atmCalls.length
       ? atmCalls.reduce((sum, row) => sum + row.impliedVolatility, 0) / atmCalls.length
       : 0;
