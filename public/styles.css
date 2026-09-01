@@ -662,6 +662,12 @@ button:disabled {
   text-align: left;
   gap: 2px;
   min-width: 0;
+  order: 1;
+}
+
+#back-trade {
+  order: 2;
+  flex-shrink: 0;
 }
 
 .results-summary strong {
