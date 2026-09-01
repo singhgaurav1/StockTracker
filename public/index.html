@@ -104,7 +104,7 @@
         <div class="strike-window">
           <label class="strike-input">
             <span>Min</span>
-            <input id="strike-min-input" type="number" inputmode="numeric" step="1" />
+            <input id="strike-min-input" type="number" inputmode="numeric" step="5" />
           </label>
           <div class="strike-slider" aria-label="Strike price window">
             <input id="strike-min-range" type="range" />
@@ -112,11 +112,11 @@
           </div>
           <label class="strike-input">
             <span>Max</span>
-            <input id="strike-max-input" type="number" inputmode="numeric" step="1" />
+            <input id="strike-max-input" type="number" inputmode="numeric" step="5" />
           </label>
         </div>
         <div id="heatmap" class="heatmap" role="table" aria-label="Option scenario table"></div>
-        <p class="hint">Rows are future stock prices. Columns are dates until expiry.</p>
+        <p class="hint">Gold mark is today’s stock price. Blue mark is the option strike.</p>
       </section>
 
       <footer id="calculate-bar" class="bottom-bar" hidden>

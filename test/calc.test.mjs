@@ -8,6 +8,14 @@ test("default strike window uses integers", () => {
   assert.equal(Number.isInteger(window.maxStrike), true);
   assert.equal(Number.isInteger(window.chainMin), true);
   assert.equal(Number.isInteger(window.chainMax), true);
+  assert.equal(window.minStrike % 5, 0);
+  assert.equal(window.maxStrike % 5, 0);
+});
+
+test("snapToStep rounds strike window values to fives", () => {
+  assert.equal(Calc.snapToStep(179, 5), 180);
+  assert.equal(Calc.snapToStep(177, 5, "floor"), 175);
+  assert.equal(Calc.snapToStep(751, 5, "ceil"), 755);
 });
 
 test("chart dates parse full timestamps without showing Invalid Date", () => {

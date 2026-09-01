@@ -71,16 +71,26 @@ export function defaultStrikeWindow(spot, strikes, ivPct, years, selectedStrike)
   minStrike = clamp(minStrike, chainMin, chainMax);
   maxStrike = clamp(maxStrike, chainMin, chainMax);
   if (minStrike > maxStrike) [minStrike, maxStrike] = [maxStrike, minStrike];
-  const roundedMin = Math.max(1, Math.round(minStrike));
-  const roundedMax = Math.max(roundedMin + 1, Math.round(maxStrike));
-  const roundedChainMin = Math.max(1, Math.floor(chainMin));
-  const roundedChainMax = Math.max(roundedChainMin + 1, Math.ceil(chainMax));
+  const chainLo = snapToStep(chainMin, 5, "floor");
+  const chainHi = Math.max(chainLo + 5, snapToStep(chainMax, 5, "ceil"));
+  const windowMin = clamp(snapToStep(minStrike, 5, "round"), chainLo, chainHi);
+  const windowMax = clamp(Math.max(windowMin + 5, snapToStep(maxStrike, 5, "round")), chainLo, chainHi);
   return {
-    minStrike: clamp(roundedMin, roundedChainMin, roundedChainMax),
-    maxStrike: clamp(roundedMax, roundedChainMin, roundedChainMax),
-    chainMin: roundedChainMin,
-    chainMax: roundedChainMax,
+    minStrike: windowMin,
+    maxStrike: windowMax,
+    chainMin: chainLo,
+    chainMax: chainHi,
   };
+}
+
+export function snapToStep(value, step = 5, mode = "round") {
+  if (!Number.isFinite(value) || step <= 0) return step;
+  const snapped = mode === "floor"
+    ? Math.floor(value / step) * step
+    : mode === "ceil"
+      ? Math.ceil(value / step) * step
+      : Math.round(value / step) * step;
+  return Math.max(step, snapped);
 }
 
 export function parseDate(value) {

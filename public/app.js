@@ -598,14 +598,14 @@ function updateBottomBar() {
 
 function syncStrikeWindowInputs() {
   if (state.strikeMin == null || state.strikeMax == null) return;
-  els.strikeMinInput.value = Math.round(state.strikeMin);
-  els.strikeMaxInput.value = Math.round(state.strikeMax);
+  els.strikeMinInput.value = state.strikeMin;
+  els.strikeMaxInput.value = state.strikeMax;
   els.strikeMinRange.min = state.chainMin;
   els.strikeMinRange.max = state.chainMax;
-  els.strikeMinRange.step = 1;
+  els.strikeMinRange.step = 5;
   els.strikeMaxRange.min = state.chainMin;
   els.strikeMaxRange.max = state.chainMax;
-  els.strikeMaxRange.step = 1;
+  els.strikeMaxRange.step = 5;
   els.strikeMinRange.value = state.strikeMin;
   els.strikeMaxRange.value = state.strikeMax;
   const span = state.chainMax - state.chainMin || 1;
@@ -616,10 +616,10 @@ function syncStrikeWindowInputs() {
 }
 
 function setStrikeWindow(minStrike, maxStrike, { rebuild = true, sync = true } = {}) {
-  const lo = Math.round(Math.min(minStrike, maxStrike));
-  const hi = Math.round(Math.max(minStrike, maxStrike));
-  state.strikeMin = Math.round(Calc.clamp(lo, state.chainMin, state.chainMax));
-  state.strikeMax = Math.round(Calc.clamp(hi, state.chainMin, state.chainMax));
+  const lo = Calc.snapToStep(Math.min(minStrike, maxStrike), 5, "round");
+  const hi = Calc.snapToStep(Math.max(minStrike, maxStrike), 5, "round");
+  state.strikeMin = Calc.clamp(lo, state.chainMin, state.chainMax);
+  state.strikeMax = Calc.clamp(hi, state.chainMin, state.chainMax);
   if (state.strikeMin > state.strikeMax) {
     state.strikeMin = state.chainMin;
     state.strikeMax = state.chainMax;
@@ -674,15 +674,11 @@ function renderHeatmap() {
       price === grid.spotRow ? "spot" : "",
       price === grid.strikeRow ? "strike" : "",
     ].join(" ");
-    const header = `<div class="${rowClass}">${Calc.money(price, price >= 100 ? 0 : 2)}<small>${delta >= 0 ? "+" : "−"}${Math.abs(delta).toFixed(0)}%</small></div>`;
+    const marker = price === grid.strikeRow ? "Strike" : price === grid.spotRow ? "Now" : `${delta >= 0 ? "+" : "−"}${Math.abs(delta).toFixed(0)}%`;
+    const header = `<div class="${rowClass}">${Calc.money(price, price >= 100 ? 0 : 2)}<small>${marker}</small></div>`;
     const cells = grid.cells[rowIndex].map((cell) => {
       const text = state.display === "pct" ? Calc.formatPct(cell.pct) : Calc.formatMultiple(cell.multiple);
-      const classes = [
-        "cell",
-        price === grid.spotRow ? "spot" : "",
-        price === grid.strikeRow ? "strike" : "",
-      ].join(" ");
-      return `<div class="${classes}" style="background:${Calc.heatColor(cell.multiple, cell.pct)}">${text}</div>`;
+      return `<div class="cell" style="background:${Calc.heatColor(cell.multiple, cell.pct)}">${text}</div>`;
     });
     return [header, ...cells];
   });
