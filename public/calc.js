@@ -388,13 +388,13 @@ export function heatColor(multiple, pct) {
   const score = multiple != null ? multiple - 1 : pct != null ? pct / 100 : 0;
   if (score > 0.02) {
     const t = clamp(Math.log10(1 + score) / Math.log10(5), 0, 1);
-    return `linear-gradient(180deg, hsl(158 ${58 + t * 18}% ${24 + t * 16}%), hsl(152 ${50 + t * 14}% ${14 + t * 10}%))`;
+    return `hsl(158, ${48 + t * 10}%, ${16 + t * 12}%)`;
   }
   if (score < -0.02) {
     const t = clamp(Math.log10(1 + Math.abs(score)) / Math.log10(3), 0, 1);
-    return `linear-gradient(180deg, hsl(6 ${58 + t * 16}% ${28 + t * 10}%), hsl(355 ${52 + t * 12}% ${16 + t * 8}%))`;
+    return `hsl(4, ${50 + t * 10}%, ${18 + t * 10}%)`;
   }
-  return "linear-gradient(180deg, #1a2430, #141c26)";
+  return "#18222d";
 }
 
 export function heatTextColor(multiple, pct) {

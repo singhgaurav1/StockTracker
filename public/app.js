@@ -60,7 +60,7 @@ const els = {
   strikeMaxRange: document.getElementById("strike-max-range"),
   modeMultiple: document.getElementById("mode-multiple"),
   modePct: document.getElementById("mode-pct"),
-  copyLink: document.getElementById("copy-link"),
+  compare: document.getElementById("compare-btn"),
   heatmap: document.getElementById("heatmap"),
   status: document.getElementById("status"),
   helpModal: document.getElementById("help-modal"),
@@ -97,6 +97,8 @@ const state = {
   view: "pick",
   restoring: false,
   windowTicker: "",
+  currentScenario: null,
+  compareScenario: null,
 };
 
 const CHART_PLOT_HEIGHT = () => (window.innerWidth < 720 ? 88 : 120);
@@ -736,8 +738,7 @@ function renderHeatmap() {
       const text = state.display === "pct" ? Calc.formatPct(cell.pct) : Calc.formatMultiple(cell.multiple);
       const bg = Calc.heatColor(cell.multiple, cell.pct);
       const fg = Calc.heatTextColor(cell.multiple, cell.pct);
-      const hot = (cell.pct ?? 0) >= 100 ? "hot" : (cell.pct ?? 0) <= -50 ? "cold" : "";
-      return `<button type="button" class="cell heat ${hot}" data-row="${rowIndex}" data-col="${colIndex}" style="background:${bg};color:${fg}">${text}</button>`;
+      return `<button type="button" class="cell heat" data-row="${rowIndex}" data-col="${colIndex}" style="background:${bg};color:${fg}">${text}</button>`;
     });
     return [header, ...cells];
   });
@@ -765,7 +766,7 @@ function rebuildHeatmap() {
   renderHeatmap();
 }
 
-async function loadTicker(ticker, { expiry, right, strike, pushUrl = true } = {}) {
+async function loadTicker(ticker, { expiry, right, strike, pushUrl = true, keepCompare = false } = {}) {
   const symbol = ticker.trim().toUpperCase();
   if (!symbol) return;
   els.lookup.disabled = true;
@@ -781,6 +782,11 @@ async function loadTicker(ticker, { expiry, right, strike, pushUrl = true } = {}
       state.chainMax = null;
       state.windowTicker = "";
       state.heatmap = null;
+      if (!keepCompare) {
+        state.currentScenario = null;
+        state.compareScenario = null;
+        updateCompareButton();
+      }
     }
     const [stock, expirationsPayload] = await Promise.all([
       api(`/api/stock?ticker=${encodeURIComponent(symbol)}`),
@@ -853,12 +859,19 @@ async function calculate({ strikeMin = null, strikeMax = null, pushUrl = true } 
     const payload = await api(
       `/api/iv-term?ticker=${encodeURIComponent(state.ticker)}&expiry=${encodeURIComponent(state.selectedExpiry)}&strike=${encodeURIComponent(option.strike)}&right=${encodeURIComponent(state.right)}`,
     );
+    const outgoing = state.heatmap ? captureScenario() : state.currentScenario;
     state.term = payload.term ?? [];
     initStrikeWindow(option);
     if (strikeMin != null && strikeMax != null && strikeMin < strikeMax) {
       setStrikeWindow(strikeMin, strikeMax, { rebuild: false, sync: false });
     }
     rebuildHeatmap();
+    const next = captureScenario();
+    if (outgoing && next && scenarioKey(outgoing) !== scenarioKey(next)) {
+      state.compareScenario = outgoing;
+    }
+    state.currentScenario = next;
+    updateCompareButton();
     showView("results", { push: false });
     if (pushUrl) syncUrl({ push: true });
     setBanner(els.tradeError, "");
@@ -868,6 +881,111 @@ async function calculate({ strikeMin = null, strikeMax = null, pushUrl = true } 
     els.calculate.disabled = false;
     toast("");
   }
+}
+
+function scenarioKey(snap) {
+  if (!snap) return "";
+  return `${snap.ticker}|${snap.expiry}|${snap.right}|${snap.strike}`;
+}
+
+function captureScenario() {
+  if (!state.ticker || state.selectedStrike == null || !state.heatmap) return null;
+  return {
+    ticker: state.ticker,
+    expiry: state.selectedExpiry,
+    right: state.right,
+    strike: state.selectedStrike,
+    strikeMin: state.strikeMin,
+    strikeMax: state.strikeMax,
+    chainMin: state.chainMin,
+    chainMax: state.chainMax,
+    display: state.display,
+    term: state.term,
+    heatmap: state.heatmap,
+  };
+}
+
+function scenarioLabel(snap) {
+  if (!snap) return "";
+  const strike = Number.isInteger(snap.strike) ? Calc.money(snap.strike, 0) : Calc.money(snap.strike);
+  return `${snap.ticker} ${strike} ${snap.right === "call" ? "Call" : "Put"}`;
+}
+
+function updateCompareButton() {
+  const ready = Boolean(state.compareScenario);
+  els.compare.disabled = !ready;
+  els.compare.title = ready
+    ? `Switch to ${scenarioLabel(state.compareScenario)}`
+    : "Calculate another strike to compare";
+}
+
+async function applyScenario(snap) {
+  if (!snap) return;
+  const sharedRange = state.ticker === snap.ticker && state.strikeMin != null && state.strikeMax != null
+    ? {
+      min: state.strikeMin,
+      max: state.strikeMax,
+      chainMin: state.chainMin,
+      chainMax: state.chainMax,
+    }
+    : null;
+  if (snap.ticker !== state.ticker) {
+    await loadTicker(snap.ticker, {
+      expiry: snap.expiry,
+      right: snap.right,
+      strike: snap.strike,
+      pushUrl: false,
+      keepCompare: true,
+    });
+  } else {
+    if (snap.expiry !== state.selectedExpiry) {
+      state.selectedExpiry = snap.expiry;
+      renderExpiries();
+      await loadChain();
+    }
+    state.right = snap.right;
+    state.selectedStrike = snap.strike;
+    renderType();
+    renderStrikes();
+  }
+  state.term = snap.term ?? [];
+  state.display = snap.display === "multiple" ? "multiple" : "pct";
+  els.modeMultiple.classList.toggle("active", state.display === "multiple");
+  els.modePct.classList.toggle("active", state.display === "pct");
+  if (sharedRange) {
+    state.chainMin = Math.min(sharedRange.chainMin ?? sharedRange.min, snap.chainMin ?? sharedRange.min);
+    state.chainMax = Math.max(sharedRange.chainMax ?? sharedRange.max, snap.chainMax ?? sharedRange.max);
+    state.strikeMin = sharedRange.min;
+    state.strikeMax = sharedRange.max;
+    syncStrikeWindowInputs();
+    rebuildHeatmap();
+  } else if (snap.strikeMin != null && snap.strikeMax != null) {
+    state.chainMin = snap.chainMin ?? snap.strikeMin;
+    state.chainMax = snap.chainMax ?? snap.strikeMax;
+    state.strikeMin = snap.strikeMin;
+    state.strikeMax = snap.strikeMax;
+    syncStrikeWindowInputs();
+    rebuildHeatmap();
+  } else if (snap.heatmap) {
+    state.heatmap = snap.heatmap;
+    renderHeatmap();
+  } else {
+    rebuildHeatmap();
+  }
+  showView("results", { push: false });
+  syncUrl({ replace: true });
+}
+
+async function toggleCompare() {
+  if (!state.compareScenario) return;
+  const current = captureScenario();
+  const other = state.compareScenario;
+  state.compareScenario = current;
+  await applyScenario(other);
+  state.currentScenario = captureScenario();
+  updateCompareButton();
+  toast(scenarioLabel(other));
+  setTimeout(() => toast(""), 1200);
 }
 
 function openHelp(key) {
@@ -1051,15 +1169,8 @@ els.heatmap.addEventListener("click", (event) => {
   openCellDetail(Number(cell.dataset.row), Number(cell.dataset.col));
 });
 
-els.copyLink.addEventListener("click", async () => {
-  const url = `${location.origin}${buildShareUrl()}`;
-  try {
-    await navigator.clipboard.writeText(url);
-    toast("Link copied");
-    setTimeout(() => toast(""), 1400);
-  } catch {
-    toast(url);
-  }
+els.compare.addEventListener("click", () => {
+  toggleCompare();
 });
 
 els.helpClose.addEventListener("click", () => els.helpModal.close());
