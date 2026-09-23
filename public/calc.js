@@ -359,6 +359,97 @@ export function heatColor(multiple, pct) {
   return "rgba(232, 238, 246, 0.08)";
 }
 
+function normPdf(x) {
+  return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
+}
+
+export function greeks(spot, strike, years, sigma, isCall) {
+  const empty = { delta: null, gamma: null, theta: null, vega: null };
+  if (!(spot > 0) || !(strike > 0) || !(sigma > 0) || !(years > 0)) return empty;
+  const t = Math.max(years, 1 / 365.25);
+  const sqrtT = Math.sqrt(t);
+  const d1 = (Math.log(spot / strike) + (RATE + (sigma ** 2) / 2) * t) / (sigma * sqrtT);
+  const d2 = d1 - sigma * sqrtT;
+  const pdf = normPdf(d1);
+  const discount = Math.exp(-RATE * t);
+  const delta = isCall ? normCdf(d1) : normCdf(d1) - 1;
+  const gamma = pdf / (spot * sigma * sqrtT);
+  let thetaAnnual = -(spot * pdf * sigma) / (2 * sqrtT);
+  if (isCall) thetaAnnual -= RATE * strike * discount * normCdf(d2);
+  else thetaAnnual += RATE * strike * discount * normCdf(-d2);
+  const theta = thetaAnnual / 365.25;
+  const vega = (spot * pdf * sqrtT) / 100;
+  if (![delta, gamma, theta, vega].every(Number.isFinite)) return empty;
+  return { delta, gamma, theta, vega };
+}
+
+export function suggestedTarget(spot, isCall) {
+  if (!(spot > 0)) return 0;
+  const step = spot >= 200 ? 10 : spot >= 50 ? 5 : spot >= 20 ? 1 : 0.5;
+  const raw = spot * (isCall ? 1.1 : 0.9);
+  let target = Math.round(raw / step) * step;
+  if (isCall && target <= spot) target += step;
+  if (!isCall && target >= spot) target = Math.max(step, target - step);
+  return roundTo(target, 2);
+}
+
+export function neighborStrikes(strikes, selected) {
+  const sorted = [...new Set((strikes ?? []).filter((strike) => strike > 0))].sort((a, b) => a - b);
+  const index = sorted.indexOf(selected);
+  if (index < 0) return [];
+  const picks = [];
+  for (const offset of [1, -1, 2, -2, 3, -3]) {
+    const strike = sorted[index + offset];
+    if (strike != null) picks.push(strike);
+    if (picks.length === 2) break;
+  }
+  return picks;
+}
+
+export function contractSnapshot({ spot, target, strike, premium, ivPct, years, isCall }) {
+  const safePremium = premium > 0 ? premium : 0;
+  const value = Math.max(isCall ? target - strike : strike - target, 0);
+  const pnlPerShare = value - safePremium;
+  const greek = greeks(spot, strike, years, ivPct > 0 ? ivPct / 100 : 0, isCall);
+  return {
+    value,
+    pnlPerShare,
+    pnlPerContract: pnlPerShare * 100,
+    maxLossPerContract: safePremium * 100,
+    returnPct: safePremium > 0 ? (pnlPerShare / safePremium) * 100 : null,
+    multiple: safePremium > 0 ? value / safePremium : null,
+    breakeven: isCall ? strike + safePremium : strike - safePremium,
+    delta: greek.delta,
+    gamma: greek.gamma,
+    theta: greek.theta,
+    vega: greek.vega,
+  };
+}
+
+export function payoffCurve({ strike, premium, isCall, minPrice, maxPrice, steps = 80 }) {
+  const safePremium = premium > 0 ? premium : 0;
+  const count = Math.max(2, steps);
+  const span = maxPrice - minPrice;
+  const points = [];
+  for (let i = 0; i <= count; i += 1) {
+    const price = minPrice + (span * i) / count;
+    const value = Math.max(isCall ? price - strike : strike - price, 0);
+    points.push({ price, value, pnl: value - safePremium });
+  }
+  return points;
+}
+
+export function payoffDomain(spot, target, strikes) {
+  const anchors = [spot * 0.8, spot * 1.2, target, ...(strikes ?? [])].filter((price) => price > 0 && Number.isFinite(price));
+  const minAnchor = Math.min(...anchors);
+  const maxAnchor = Math.max(...anchors);
+  const pad = Math.max((maxAnchor - minAnchor) * 0.08, (spot > 0 ? spot : 1) * 0.02);
+  return {
+    minPrice: Math.max(0.01, minAnchor - pad),
+    maxPrice: maxAnchor + pad,
+  };
+}
+
 export function compactNumber(value) {
   const n = Number(value) || 0;
   if (Math.abs(n) >= 1e9) return `${(n / 1e9).toFixed(1)}B`;

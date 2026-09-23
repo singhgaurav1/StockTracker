@@ -4,16 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#0c1117" />
-    <title>Stock Tracker</title>
+    <title>Options Scenario Analyzer</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <div id="app">
       <section id="view-pick" class="view view-pick">
         <header class="brand">
-          <p class="eyebrow">Stock Tracker</p>
-          <h1>See an option’s payoff across prices and time.</h1>
-          <p class="lede">Pick a stock, choose an expiration and a call or put, then calculate a scenario table that fits on your screen.</p>
+          <p class="eyebrow">Options Scenario Analyzer</p>
+          <h1>What happens to my option if the stock moves to X?</h1>
+          <p class="lede">Pick a ticker. The expiry payoff shows up immediately, and you can compare strikes on one chart.</p>
         </header>
         <form id="ticker-form" class="search-card">
           <label for="ticker-input">Stock ticker</label>
@@ -26,24 +26,118 @@
         <p id="pick-error" class="banner error" hidden></p>
       </section>
 
-      <section id="view-trade" class="view view-trade" hidden>
+      <section id="view-analyzer" class="view view-analyzer" hidden>
         <header class="topbar">
           <button type="button" class="text-btn" id="back-pick">Stocks</button>
-          <strong id="trade-symbol"></strong>
+          <form id="switch-form" class="switch-form">
+            <input id="switch-input" aria-label="Stock ticker" inputmode="latin" autocomplete="off" spellcheck="false" maxlength="10" />
+          </form>
           <button type="button" class="text-btn" id="refresh-btn">Refresh</button>
         </header>
 
-        <article class="quote-card compact">
-          <div class="quote-head">
-            <div class="quote-main">
-              <h2 id="company-name"></h2>
-              <div class="quote-line">
-                <div id="stock-price" class="price"></div>
-                <div id="price-change" class="change"></div>
-              </div>
-            </div>
-            <div id="hv-pill" class="pill">HV —</div>
+        <p id="analyzer-error" class="banner error" hidden></p>
+
+        <article class="quote-hero">
+          <p class="quote-symbol" id="trade-symbol"></p>
+          <p class="company" id="company-name"></p>
+          <div class="quote-line">
+            <div id="stock-price" class="price"></div>
+            <div id="price-change" class="change"></div>
           </div>
+        </article>
+
+        <article class="panel scenario-card">
+          <h2>Choose your scenario</h2>
+          <div class="scenario-top">
+            <div class="segmented mini" role="tablist" aria-label="Option type">
+              <button type="button" id="type-call" class="active">Call</button>
+              <button type="button" id="type-put">Put</button>
+            </div>
+            <label class="field compact-field">
+              <span>Expiration</span>
+              <select id="expiry-select"></select>
+            </label>
+          </div>
+          <p class="field-label">Strike</p>
+          <div id="strike-scroll" class="strike-scroll" role="listbox" aria-label="Strike"></div>
+          <p class="target-label">If <b id="target-name">the stock</b> goes to</p>
+          <div class="target-row">
+            <input id="target-input" type="number" inputmode="decimal" aria-label="Target stock price" />
+            <span id="target-move" class="target-move"></span>
+          </div>
+          <input id="target-range" class="target-range" type="range" aria-label="Target stock price" />
+          <div class="chips move-chips" id="move-chips"></div>
+        </article>
+
+        <article class="result-card">
+          <p id="hero-kicker" class="hero-kicker"></p>
+          <p id="hero-contract" class="hero-contract"></p>
+          <p id="hero-pnl" class="hero-pnl" aria-live="polite"></p>
+          <p id="hero-unit" class="hero-unit"></p>
+          <p id="hero-detail" class="hero-detail"></p>
+          <dl id="hero-facts" class="hero-facts"></dl>
+          <div id="payoff-legend" class="payoff-legend"></div>
+          <div id="payoff-chart" class="payoff-chart" role="img" aria-label="Expiry payoff chart"></div>
+          <p class="hint">Drag the chart or the slider. The result updates immediately.</p>
+        </article>
+
+        <article class="panel" id="compare-card">
+          <div class="section-head">
+            <h2>Compare strikes</h2>
+            <button type="button" class="text-btn" id="compare-reset">Nearby strikes</button>
+          </div>
+          <p id="compare-insight" class="insight"></p>
+          <div id="compare-editors" class="compare-editors"></div>
+          <div class="table-scroll">
+            <table id="compare-table" class="compare-table"></table>
+          </div>
+          <p class="hint">Premium, payoff, and return are at expiration. Greeks are measured at the current stock price.</p>
+        </article>
+
+        <article class="panel">
+          <h2>Across prices and time</h2>
+          <p class="hint">Each cell is what your chosen option is worth at that stock price on that date, before expiry.</p>
+          <div class="controls">
+            <div class="strike-window">
+              <label class="strike-input">
+                <span>Min</span>
+                <input id="strike-min-input" type="number" inputmode="decimal" step="0.5" />
+              </label>
+              <div class="strike-slider" aria-label="Price window">
+                <span class="strike-slider-label">Price window</span>
+                <input id="strike-min-range" type="range" />
+                <input id="strike-max-range" type="range" />
+              </div>
+              <label class="strike-input">
+                <span>Max</span>
+                <input id="strike-max-input" type="number" inputmode="decimal" step="0.5" />
+              </label>
+            </div>
+            <div class="segmented mini" role="tablist" aria-label="Display mode">
+              <button type="button" id="mode-multiple" class="active">Multiple</button>
+              <button type="button" id="mode-pct">%</button>
+            </div>
+          </div>
+          <div id="heatmap" class="heatmap" role="table" aria-label="Option scenario table"></div>
+          <p class="hint">Rows are future stock prices. Columns are dates until expiry.</p>
+        </article>
+
+        <article class="panel">
+          <h2>Option chain</h2>
+          <p class="hint">Tap a strike to use it in the scenario above.</p>
+          <div class="chain-scroll">
+            <table class="chain-table" id="chain-table" aria-label="Option chain">
+              <thead></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </article>
+
+        <details id="history-panel" class="panel history-card">
+          <summary class="history-summary">
+            <span>Price history and volatility</span>
+            <span id="history-meta"></span>
+          </summary>
           <div class="chart-toolbar">
             <div class="segmented mini" id="chart-toggle" role="tablist" aria-label="Chart type">
               <button type="button" data-chart="price" class="active">Price</button>
@@ -61,72 +155,8 @@
             <p id="chart-caption" class="chart-caption"></p>
           </div>
           <dl class="stats stats-inline" id="stock-stats"></dl>
-        </article>
-
-        <article class="trade-card">
-          <div class="trade-controls">
-            <label class="field compact-field">
-              <span class="section-title">Expiration</span>
-              <select id="expiry-select"></select>
-            </label>
-            <div class="segmented mini" role="tablist" aria-label="Option type">
-              <button type="button" id="type-call" class="active">Call</button>
-              <button type="button" id="type-put">Put</button>
-            </div>
-          </div>
-          <div class="chain-head">
-            <span class="section-title">Option chain</span>
-          </div>
-          <div class="chain-scroll">
-            <table class="chain-table" id="chain-table" aria-label="Option chain">
-              <thead></thead>
-              <tbody></tbody>
-            </table>
-          </div>
-          <p id="trade-error" class="banner error" hidden></p>
-        </article>
+        </details>
       </section>
-
-      <section id="view-results" class="view view-results" hidden>
-        <header class="results-bar">
-          <div class="results-summary">
-            <strong id="result-title"></strong>
-            <span id="result-sub"></span>
-          </div>
-          <button type="button" class="text-btn" id="back-trade">Edit</button>
-        </header>
-        <div class="controls">
-          <div class="strike-window">
-            <label class="strike-input">
-              <span>Min</span>
-              <input id="strike-min-input" type="number" inputmode="decimal" step="0.5" />
-            </label>
-            <div class="strike-slider" aria-label="Strike price window">
-              <span class="strike-slider-label">Strike window</span>
-              <input id="strike-min-range" type="range" />
-              <input id="strike-max-range" type="range" />
-            </div>
-            <label class="strike-input">
-              <span>Max</span>
-              <input id="strike-max-input" type="number" inputmode="decimal" step="0.5" />
-            </label>
-          </div>
-          <div class="segmented mini" role="tablist" aria-label="Display mode">
-            <button type="button" id="mode-multiple" class="active">Multiple</button>
-            <button type="button" id="mode-pct">%</button>
-          </div>
-        </div>
-        <div id="heatmap" class="heatmap" role="table" aria-label="Option scenario table"></div>
-        <p class="hint">Rows are future stock prices. Columns are dates until expiry.</p>
-      </section>
-
-      <footer id="calculate-bar" class="bottom-bar" hidden>
-        <div class="bottom-bar-copy">
-          <strong id="selected-contract"></strong>
-          <span id="selected-premium"></span>
-        </div>
-        <button type="button" class="primary" id="calculate-btn">Calculate</button>
-      </footer>
 
       <dialog id="help-modal" class="help-modal">
         <h3 id="help-title"></h3>

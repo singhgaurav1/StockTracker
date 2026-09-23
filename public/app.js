@@ -1,6 +1,8 @@
 import * as Calc from "./calc.js";
 
 const POPULAR = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "GOOGL", "META", "SPY", "QQQ", "IWM"];
+const LEG_COLORS = ["#5b8cff", "#f0c35b", "#d28bff"];
+const MOVES = [-20, -10, -5, 5, 10, 20];
 
 const CHAIN_COLUMNS = [
   { id: "last", label: "Last" },
@@ -23,21 +25,23 @@ const HELP_COPY = {
 
 const els = {
   pick: document.getElementById("view-pick"),
-  trade: document.getElementById("view-trade"),
-  results: document.getElementById("view-results"),
+  analyzer: document.getElementById("view-analyzer"),
   form: document.getElementById("ticker-form"),
   input: document.getElementById("ticker-input"),
   lookup: document.getElementById("lookup-btn"),
   chips: document.getElementById("popular-chips"),
   pickError: document.getElementById("pick-error"),
-  tradeError: document.getElementById("trade-error"),
+  analyzerError: document.getElementById("analyzer-error"),
   backPick: document.getElementById("back-pick"),
   refresh: document.getElementById("refresh-btn"),
+  switchForm: document.getElementById("switch-form"),
+  switchInput: document.getElementById("switch-input"),
   tradeSymbol: document.getElementById("trade-symbol"),
   company: document.getElementById("company-name"),
   price: document.getElementById("stock-price"),
   change: document.getElementById("price-change"),
-  hv: document.getElementById("hv-pill"),
+  history: document.getElementById("history-panel"),
+  historyMeta: document.getElementById("history-meta"),
   chart: document.getElementById("price-chart"),
   chartToggle: document.getElementById("chart-toggle"),
   chartCaption: document.getElementById("chart-caption"),
@@ -46,14 +50,25 @@ const els = {
   expiry: document.getElementById("expiry-select"),
   typeCall: document.getElementById("type-call"),
   typePut: document.getElementById("type-put"),
+  strikeScroll: document.getElementById("strike-scroll"),
+  targetName: document.getElementById("target-name"),
+  targetInput: document.getElementById("target-input"),
+  targetMove: document.getElementById("target-move"),
+  targetRange: document.getElementById("target-range"),
+  moveChips: document.getElementById("move-chips"),
+  heroKicker: document.getElementById("hero-kicker"),
+  heroContract: document.getElementById("hero-contract"),
+  heroPnl: document.getElementById("hero-pnl"),
+  heroUnit: document.getElementById("hero-unit"),
+  heroDetail: document.getElementById("hero-detail"),
+  heroFacts: document.getElementById("hero-facts"),
+  payoffLegend: document.getElementById("payoff-legend"),
+  payoff: document.getElementById("payoff-chart"),
+  compareInsight: document.getElementById("compare-insight"),
+  compareEditors: document.getElementById("compare-editors"),
+  compareTable: document.getElementById("compare-table"),
+  compareReset: document.getElementById("compare-reset"),
   chainTable: document.getElementById("chain-table"),
-  calculateBar: document.getElementById("calculate-bar"),
-  selectedContract: document.getElementById("selected-contract"),
-  selectedPremium: document.getElementById("selected-premium"),
-  calculate: document.getElementById("calculate-btn"),
-  backTrade: document.getElementById("back-trade"),
-  resultTitle: document.getElementById("result-title"),
-  resultSub: document.getElementById("result-sub"),
   strikeMinInput: document.getElementById("strike-min-input"),
   strikeMaxInput: document.getElementById("strike-max-input"),
   strikeMinRange: document.getElementById("strike-min-range"),
@@ -76,6 +91,7 @@ const state = {
   chart: "price",
   expirations: [],
   selectedExpiry: "",
+  loadedExpiry: "",
   right: "call",
   calls: [],
   puts: [],
@@ -88,16 +104,53 @@ const state = {
   chainMax: null,
   display: "multiple",
   term: [],
+  termKey: "",
+  termToken: 0,
+  termTimer: 0,
   heatmap: null,
   view: "pick",
   restoring: false,
+  targetPrice: null,
+  targetTouched: false,
+  chainCache: {},
+  chainLoading: {},
+  compare: [{ auto: true, hidden: false }, { auto: true, hidden: false }],
+  windowKey: "",
+  pendingMin: null,
+  pendingMax: null,
+  payoffMap: null,
+  urlTimer: 0,
 };
 
-const CHART_PLOT_HEIGHT = () => (window.innerWidth < 720 ? 88 : 120);
+let lastChipStrike = null;
+const CHART_PLOT_HEIGHT = () => (window.innerWidth < 720 ? 160 : 200);
 const Y_AXIS_WIDTH = 42;
 
 function urlParams() {
   return new URLSearchParams(location.search);
+}
+
+function defaultCompare() {
+  return [{ auto: true, hidden: false }, { auto: true, hidden: false }];
+}
+
+function encodeSlot(slot) {
+  if (!slot) return "";
+  if (slot.hidden) return "off";
+  if (slot.auto !== false) return "";
+  return `${slot.strike},${slot.right},${slot.expiry}`;
+}
+
+function parseSlot(raw) {
+  if (!raw) return { auto: true, hidden: false };
+  if (raw === "off") return { auto: false, hidden: true };
+  const [strikeRaw, rightRaw, expiry] = raw.split(",");
+  const strike = Number(strikeRaw);
+  const right = rightRaw === "put" ? "put" : "call";
+  if (!Number.isFinite(strike) || !/^\d{4}-\d{2}-\d{2}$/.test(expiry || "")) {
+    return { auto: true, hidden: false };
+  }
+  return { auto: false, hidden: false, strike, right, expiry };
 }
 
 function buildShareUrl() {
@@ -107,14 +160,16 @@ function buildShareUrl() {
   if (state.selectedExpiry) params.set("expiry", state.selectedExpiry);
   if (state.right) params.set("type", state.right);
   if (state.selectedStrike != null) params.set("strike", String(state.selectedStrike));
+  if (state.targetPrice != null) params.set("target", String(state.targetPrice));
+  const encodedB = encodeSlot(state.compare[0]);
+  const encodedC = encodeSlot(state.compare[1]);
+  if (encodedB) params.set("b", encodedB);
+  if (encodedC) params.set("c", encodedC);
   if (state.period !== "3m") params.set("period", state.period);
   if (state.chart !== "price") params.set("chart", state.chart);
-  if (state.view === "results" && state.heatmap) {
-    params.set("pnl", "1");
-    if (state.strikeMin != null) params.set("min", String(state.strikeMin));
-    if (state.strikeMax != null) params.set("max", String(state.strikeMax));
-    if (state.display !== "multiple") params.set("mode", state.display);
-  }
+  if (state.strikeMin != null) params.set("min", String(state.strikeMin));
+  if (state.strikeMax != null) params.set("max", String(state.strikeMax));
+  if (state.display !== "multiple") params.set("mode", state.display);
   const qs = params.toString();
   return qs ? `${location.pathname}?${qs}` : location.pathname;
 }
@@ -122,52 +177,46 @@ function buildShareUrl() {
 function syncUrl({ push = true, replace = false } = {}) {
   if (state.restoring) return;
   const url = state.view === "pick" && !state.ticker ? location.pathname : buildShareUrl();
-  const snapshot = {
-    view: state.view,
-    ticker: state.ticker,
-    expiry: state.selectedExpiry,
-    right: state.right,
-    strike: state.selectedStrike,
-    pnl: state.view === "results",
-  };
-  if (replace) history.replaceState(snapshot, "", url);
-  else if (push) history.pushState(snapshot, "", url);
-  else history.replaceState(snapshot, "", url);
+  const snapshot = { view: state.view, ticker: state.ticker };
+  if (replace || !push) history.replaceState(snapshot, "", url);
+  else history.pushState(snapshot, "", url);
+}
+
+function queueUrl() {
+  if (state.restoring) return;
+  clearTimeout(state.urlTimer);
+  state.urlTimer = setTimeout(() => syncUrl({ replace: true }), 120);
 }
 
 function showView(name, { push = true } = {}) {
   state.view = name;
   els.pick.hidden = name !== "pick";
-  els.trade.hidden = name !== "trade";
-  els.results.hidden = name !== "results";
+  els.analyzer.hidden = name !== "analyzer";
   document.body.dataset.view = name;
+  document.title = name === "analyzer" && state.info
+    ? `${state.info.symbol} · Options Scenario Analyzer`
+    : "Options Scenario Analyzer";
   if (push) syncUrl({ push: true });
-  updateBottomBar();
 }
 
 function goBack() {
+  if (state.view !== "analyzer") return;
   if (history.length > 1) {
     history.back();
     return;
   }
-  if (state.view === "results") {
-    showView("trade", { push: false });
-    syncUrl({ replace: true });
-  } else if (state.view === "trade") {
-    state.ticker = "";
-    showView("pick", { push: false });
-    history.replaceState({ view: "pick" }, "", location.pathname);
-  }
+  state.ticker = "";
+  showView("pick", { push: false });
+  history.replaceState({ view: "pick" }, "", location.pathname);
 }
 
 window.addEventListener("popstate", () => {
-  restoreFromUrl({ push: false });
+  restoreFromUrl();
 });
 
-async function restoreFromUrl({ push = false } = {}) {
+async function restoreFromUrl() {
   const params = urlParams();
   const symbol = (params.get("symbol") || params.get("ticker") || "").trim().toUpperCase();
-  const pnl = params.get("pnl") === "1";
 
   if (!symbol) {
     state.restoring = true;
@@ -178,11 +227,15 @@ async function restoreFromUrl({ push = false } = {}) {
   }
 
   const expiry = params.get("expiry") || undefined;
-  const right = params.get("type") === "put" ? "put" : "call";
+  const right = params.get("type") === "put" ? "put" : params.get("type") === "call" ? "call" : undefined;
   const strike = params.get("strike") ? Number(params.get("strike")) : null;
+  const target = params.get("target") ? Number(params.get("target")) : null;
   const period = params.get("period");
   const chart = params.get("chart");
   const mode = params.get("mode");
+  const compare = params.has("b") || params.has("c")
+    ? [parseSlot(params.get("b")), parseSlot(params.get("c"))]
+    : null;
 
   if (period && ["1m", "3m", "6m", "1y"].includes(period)) {
     state.period = period;
@@ -201,35 +254,24 @@ async function restoreFromUrl({ push = false } = {}) {
     els.modeMultiple.classList.toggle("active", mode === "multiple");
     els.modePct.classList.toggle("active", mode === "pct");
   }
+  state.pendingMin = params.get("min") ? Number(params.get("min")) : null;
+  state.pendingMax = params.get("max") ? Number(params.get("max")) : null;
 
   state.restoring = true;
-  const sameTicker = state.ticker === symbol && state.info;
   try {
-    if (!sameTicker) {
-      await loadTicker(symbol, { expiry, right, strike, pushUrl: false });
-    } else {
-      if (expiry && state.expirations.includes(expiry)) state.selectedExpiry = expiry;
-      state.right = right;
-      renderType();
-      await loadChain();
-      if (strike != null && currentOptions().some((row) => row.strike === strike)) {
-        state.selectedStrike = strike;
-        renderStrikes();
-      }
-    }
-
-    if (pnl && state.selectedStrike != null) {
-      const min = params.get("min") ? Number(params.get("min")) : null;
-      const max = params.get("max") ? Number(params.get("max")) : null;
-      await calculate({ strikeMin: min, strikeMax: max, pushUrl: false });
-    } else {
-      showView("trade", { push: false });
-    }
+    await loadTicker(symbol, {
+      expiry,
+      right,
+      strike,
+      target: Number.isFinite(target) ? target : null,
+      compare,
+      pushUrl: false,
+    });
   } catch {
     showView("pick", { push: false });
   } finally {
     state.restoring = false;
-    if (!push) syncUrl({ replace: true });
+    syncUrl({ replace: true });
   }
 }
 
@@ -280,6 +322,100 @@ function changeClass(value) {
   if (value > 0) return "up";
   if (value < 0) return "down";
   return "";
+}
+
+function formatPrice(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  const digits = Math.abs(n - Math.round(n)) < 0.001 ? 0 : 2;
+  return Calc.money(n, digits);
+}
+
+function formatSignedMoney(value, digits = 2) {
+  if (!Number.isFinite(value)) return "—";
+  const abs = Calc.money(Math.abs(value), digits);
+  if (value > 0.0000001) return `+${abs}`;
+  if (value < -0.0000001) return `−${abs}`;
+  return Calc.money(0, digits);
+}
+
+function contractDigits(value) {
+  return Math.abs(value) >= 100 ? 0 : 2;
+}
+
+function formatSignedContract(value) {
+  return formatSignedMoney(value, contractDigits(value));
+}
+
+function formatUnsignedContract(value) {
+  if (!Number.isFinite(value)) return "—";
+  return Calc.money(Math.abs(value), contractDigits(value));
+}
+
+function formatDelta(value) {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return value.toFixed(2);
+}
+
+function formatTheta(value) {
+  if (value == null || !Number.isFinite(value)) return "—";
+  const digits = Math.abs(value) >= 0.1 ? 2 : 3;
+  return `${formatSignedMoney(value, digits)}/d`;
+}
+
+function formatVega(value) {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return Calc.money(value, 2);
+}
+
+function priceStep(spot) {
+  if (spot >= 100) return 1;
+  if (spot >= 20) return 0.5;
+  return 0.05;
+}
+
+function snapPrice(price, step) {
+  const snapped = Math.round(price / step) * step;
+  const digits = step >= 1 ? 2 : step >= 0.1 ? 2 : 2;
+  const factor = 10 ** digits;
+  return Math.round(snapped * factor) / factor;
+}
+
+function targetBounds() {
+  const spot = state.info?.currentPrice || 1;
+  const step = priceStep(spot);
+  let min = Math.max(step, snapPrice(spot * 0.5, step));
+  let max = snapPrice(spot * 1.5, step);
+  if (state.targetPrice != null) {
+    min = Math.min(min, state.targetPrice);
+    max = Math.max(max, state.targetPrice);
+  }
+  return { min, max };
+}
+
+function formatMove(target, spot) {
+  const pct = ((target - spot) / spot) * 100;
+  const sign = pct > 0 ? "+" : pct < 0 ? "−" : "";
+  return `${sign}${Math.abs(pct).toFixed(1)}% from ${formatPrice(spot)}`;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;",
+  }[ch]));
+}
+
+function targetPhrase(symbol, target, spot) {
+  const price = `<b>${formatPrice(target)}</b>`;
+  const name = escapeHtml(symbol);
+  const pct = ((target - spot) / spot) * 100;
+  if (Math.abs(pct) < 0.25) return `If ${name} stays near ${price} through expiry`;
+  if (target > spot) return `If ${name} goes to ${price} by expiry`;
+  return `If ${name} falls to ${price} by expiry`;
 }
 
 function renderChips() {
@@ -399,7 +535,7 @@ function bindChartInteraction(plot, coords, formatValue) {
   const crosshair = plot.querySelector(".chart-crosshair");
   const dot = plot.querySelector(".chart-dot");
   const tooltip = plot.querySelector(".chart-tooltip");
-  const lineColor = plot.querySelector('path[stroke]')?.getAttribute("stroke") || "#5b8cff";
+  const lineColor = plot.querySelector("path[stroke]")?.getAttribute("stroke") || "#5b8cff";
 
   const showAt = (clientX) => {
     const rect = plot.getBoundingClientRect();
@@ -483,17 +619,29 @@ function stat(label, value) {
 
 function renderQuote() {
   const { info } = state;
+  if (!info) return;
   const change = info.currentPrice - info.previousClose;
   const changePct = info.previousClose ? (change / info.previousClose) * 100 : 0;
-  const hv = latestHv();
-  const atmIv = currentAtmIv();
+  const pct = `${changePct >= 0 ? "+" : "−"}${Math.abs(changePct).toFixed(2)}%`;
+  const dollars = `${change >= 0 ? "+" : "−"}${Calc.money(Math.abs(change))}`;
   els.tradeSymbol.textContent = info.symbol;
   els.company.textContent = info.longName;
   els.price.textContent = Calc.money(info.currentPrice);
   els.change.className = `change ${changeClass(change)}`;
-  els.change.textContent = `${change >= 0 ? "+" : "−"}${Calc.money(Math.abs(change)).slice(1)} (${changePct >= 0 ? "+" : "−"}${Math.abs(changePct).toFixed(2)}%)`;
-  els.hv.textContent = [
-    hv != null ? `HV ${hv.toFixed(1)}%` : "HV —",
+  els.change.textContent = `${pct}  ${dollars}`;
+  els.switchInput.value = info.symbol;
+  els.targetName.textContent = info.symbol;
+  document.title = `${info.symbol} · Options Scenario Analyzer`;
+  renderHistoryStats();
+}
+
+function renderHistoryStats() {
+  const { info } = state;
+  if (!info) return;
+  const hv = latestHv();
+  const atmIv = currentAtmIv();
+  els.historyMeta.textContent = [
+    hv != null ? `HV ${hv.toFixed(1)}%` : null,
     atmIv != null ? `IV ${atmIv.toFixed(1)}%` : null,
   ].filter(Boolean).join(" · ");
   els.stats.innerHTML = [
@@ -502,7 +650,6 @@ function renderQuote() {
     stat("Vol", Calc.compactNumber(info.volume)),
     stat("52w", `${Calc.money(info.fiftyTwoWeekLow, 0)}–${Calc.money(info.fiftyTwoWeekHigh, 0)}`),
   ].join("");
-  renderChart();
 }
 
 function expiryLabel(date) {
@@ -528,6 +675,461 @@ function renderType() {
   els.typePut.classList.toggle("active", state.right === "put");
 }
 
+function chipStrikes(rows) {
+  const spot = state.info?.currentPrice ?? 0;
+  const strikes = rows.map((row) => row.strike);
+  let band = strikes.filter((strike) => strike >= spot * 0.75 && strike <= spot * 1.25);
+  if (band.length < 7) band = strikes;
+  if (state.selectedStrike != null && !band.includes(state.selectedStrike)) {
+    band = [...band, state.selectedStrike].sort((a, b) => a - b);
+  }
+  return band;
+}
+
+function renderStrikeChips() {
+  const rows = currentOptions();
+  const visible = new Set(chipStrikes(rows));
+  const shown = rows.filter((row) => visible.has(row.strike));
+  els.strikeScroll.innerHTML = shown.map((row) => {
+    const selected = row.strike === state.selectedStrike ? "selected" : "";
+    const atm = row.moneyness === "ATM" ? "atm" : "";
+    const premium = Calc.optionPremium(row);
+    return `<button type="button" class="strike-chip ${selected} ${atm}" data-strike="${row.strike}" role="option" aria-selected="${selected ? "true" : "false"}"><strong>${formatPrice(row.strike).slice(1)}</strong><small>${premium > 0 ? Calc.money(premium) : "—"}</small></button>`;
+  }).join("");
+  if (lastChipStrike !== state.selectedStrike) {
+    lastChipStrike = state.selectedStrike;
+    requestAnimationFrame(() => {
+      const chip = els.strikeScroll.querySelector(".selected");
+      if (!chip) return;
+      els.strikeScroll.scrollLeft = Math.max(0, chip.offsetLeft - els.strikeScroll.clientWidth / 2 + chip.offsetWidth / 2);
+    });
+  }
+}
+
+function renderMoveChips() {
+  if (!state.info || state.targetPrice == null) return;
+  const spot = state.info.currentPrice;
+  const step = priceStep(spot);
+  els.moveChips.innerHTML = MOVES.map((pct) => {
+    const price = snapPrice(spot * (1 + pct / 100), step);
+    const active = Math.abs(price - state.targetPrice) <= step * 0.51;
+    const label = `${pct > 0 ? "+" : "−"}${Math.abs(pct)}%`;
+    return `<button type="button" data-move="${pct}" class="${active ? "active" : ""}">${label}</button>`;
+  }).join("");
+}
+
+function renderTargetControls() {
+  if (!state.info || state.targetPrice == null) return;
+  const bounds = targetBounds();
+  const step = priceStep(state.info.currentPrice);
+  els.targetRange.min = String(bounds.min);
+  els.targetRange.max = String(bounds.max);
+  els.targetRange.step = String(step);
+  els.targetRange.value = String(state.targetPrice);
+  els.targetInput.min = String(bounds.min);
+  els.targetInput.max = String(bounds.max);
+  els.targetInput.step = String(step);
+  if (document.activeElement !== els.targetInput) els.targetInput.value = String(state.targetPrice);
+  const pct = ((state.targetPrice - state.info.currentPrice) / state.info.currentPrice) * 100;
+  els.targetMove.className = `target-move ${pct > 0.05 ? "up" : pct < -0.05 ? "down" : ""}`;
+  els.targetMove.textContent = formatMove(state.targetPrice, state.info.currentPrice);
+  renderMoveChips();
+}
+
+function renderScenario() {
+  renderType();
+  renderExpiries();
+  renderStrikeChips();
+  renderTargetControls();
+}
+
+function chainFor(expiry) {
+  if (expiry === state.selectedExpiry) return { calls: state.calls, puts: state.puts };
+  return state.chainCache[expiry] ?? null;
+}
+
+function materializedSlot(index) {
+  const stored = state.compare[index] ?? { auto: true, hidden: false };
+  if (stored.hidden) return { ...stored, hidden: true };
+  if (stored.auto === false && stored.strike != null && stored.expiry && stored.right) return stored;
+  const neighbors = Calc.neighborStrikes(chainStrikes(), state.selectedStrike);
+  const strike = neighbors[index];
+  if (strike == null) return { auto: true, hidden: true, empty: true };
+  return {
+    strike,
+    right: state.right,
+    expiry: state.selectedExpiry,
+    auto: true,
+    hidden: false,
+  };
+}
+
+function primarySpec() {
+  return {
+    key: "primary",
+    color: LEG_COLORS[0],
+    strike: state.selectedStrike,
+    right: state.right,
+    expiry: state.selectedExpiry,
+    primary: true,
+  };
+}
+
+function legId(leg) {
+  return `${leg.expiry}|${leg.right}|${leg.strike}`;
+}
+
+function activeLegs() {
+  const legs = [];
+  const primary = primarySpec();
+  if (primary.strike != null) legs.push(primary);
+  const seen = new Set(legs.map(legId));
+  [0, 1].forEach((index) => {
+    const slot = materializedSlot(index);
+    if (!slot || slot.hidden || slot.empty || slot.strike == null) return;
+    const leg = {
+      key: `alt-${index}`,
+      slot: index,
+      color: LEG_COLORS[index + 1],
+      strike: slot.strike,
+      right: slot.right,
+      expiry: slot.expiry,
+      primary: false,
+      auto: slot.auto,
+    };
+    if (seen.has(legId(leg))) return;
+    seen.add(legId(leg));
+    legs.push(leg);
+  });
+  return legs;
+}
+
+function legName(leg) {
+  const side = leg.right === "put" ? "Put" : "Call";
+  return `${formatPrice(leg.strike)} ${side}`;
+}
+
+function legSnapshot(leg) {
+  const chain = chainFor(leg.expiry);
+  if (!chain) return { ...leg, pending: true };
+  const rows = leg.right === "put" ? chain.puts : chain.calls;
+  const option = rows.find((row) => row.strike === leg.strike);
+  if (!option) return { ...leg, missing: true, pending: false };
+  const premium = Calc.optionPremium(option);
+  const years = Math.max(Calc.yearsBetween(Calc.todayISO(), leg.expiry), 0);
+  const stats = Calc.contractSnapshot({
+    spot: state.info.currentPrice,
+    target: state.targetPrice,
+    strike: option.strike,
+    premium,
+    ivPct: option.impliedVolatility,
+    years,
+    isCall: leg.right === "call",
+  });
+  return { ...leg, option, premium, years, pending: false, missing: false, ...stats };
+}
+
+function fact(label, value) {
+  return `<div><dt>${label}</dt><dd>${value}</dd></div>`;
+}
+
+function renderHero() {
+  const option = selectedOption();
+  if (!state.info || state.targetPrice == null || !option) {
+    els.heroKicker.textContent = "Choose a strike to price the scenario.";
+    els.heroContract.textContent = "";
+    els.heroPnl.textContent = "";
+    els.heroUnit.textContent = "";
+    els.heroDetail.textContent = "";
+    els.heroFacts.innerHTML = "";
+    return;
+  }
+  const snap = legSnapshot(primarySpec());
+  els.heroKicker.innerHTML = targetPhrase(state.info.symbol, state.targetPrice, state.info.currentPrice);
+  els.heroContract.textContent = `${legName(snap)} · ${expiryLabel(snap.expiry)}`;
+  if (!(snap.premium > 0)) {
+    els.heroPnl.className = "hero-pnl";
+    els.heroPnl.textContent = "No quoted premium";
+    els.heroUnit.textContent = "";
+    els.heroDetail.textContent = "This strike doesn’t have a usable bid or ask yet.";
+    els.heroFacts.innerHTML = "";
+    return;
+  }
+  const up = snap.pnlPerContract > 0.5;
+  const down = snap.pnlPerContract < -0.5;
+  els.heroPnl.className = `hero-pnl ${up ? "up" : down ? "down" : ""}`;
+  if (Math.abs(snap.pnlPerShare) < 0.005) {
+    els.heroPnl.textContent = "$0";
+    els.heroUnit.textContent = "per contract";
+    els.heroDetail.textContent = `You break even at expiry · paid ${formatPrice(snap.premium)}`;
+  } else if (snap.value <= 0.0001) {
+    els.heroPnl.textContent = formatSignedContract(snap.pnlPerContract);
+    els.heroUnit.textContent = "per contract";
+    els.heroDetail.textContent = `Expires worthless · paid ${formatPrice(snap.premium)}`;
+  } else {
+    els.heroPnl.textContent = formatSignedContract(snap.pnlPerContract);
+    els.heroUnit.textContent = "per contract";
+    const bits = [
+      `Worth ${formatPrice(snap.value)}`,
+      `paid ${formatPrice(snap.premium)}`,
+      Calc.formatPct(snap.returnPct),
+    ];
+    if (snap.multiple >= 1) bits.push(Calc.formatMultiple(snap.multiple));
+    els.heroDetail.textContent = bits.join(" · ");
+  }
+  els.heroFacts.innerHTML = [
+    fact("Premium", formatPrice(snap.premium)),
+    fact("Breakeven", formatPrice(snap.breakeven)),
+    fact("Max loss", formatUnsignedContract(snap.maxLossPerContract)),
+    fact("Delta", formatDelta(snap.delta)),
+  ].join("");
+}
+
+function renderPayoff(retry = true) {
+  if (!state.info || state.targetPrice == null) return;
+  const snaps = activeLegs().map(legSnapshot).filter((snap) => !snap.pending && !snap.missing && snap.strike != null);
+  if (!snaps.length) {
+    els.payoffLegend.innerHTML = "";
+    els.payoff.innerHTML = `<div class="chart-empty">Choose a strike with a quoted premium.</div>`;
+    state.payoffMap = null;
+    return;
+  }
+  const spot = state.info.currentPrice;
+  const target = state.targetPrice;
+  const domain = Calc.payoffDomain(spot, target, snaps.map((snap) => snap.strike));
+  const curves = snaps.map((snap) => ({
+    ...snap,
+    points: Calc.payoffCurve({
+      strike: snap.strike,
+      premium: snap.premium,
+      isCall: snap.right === "call",
+      minPrice: domain.minPrice,
+      maxPrice: domain.maxPrice,
+      steps: 96,
+    }),
+  }));
+  const pnls = curves.flatMap((curve) => curve.points.map((point) => point.pnl));
+  let yMin = Math.min(0, ...pnls);
+  let yMax = Math.max(0, ...pnls);
+  const yPad = (yMax - yMin) * 0.14 || 1;
+  yMin -= yPad;
+  yMax += yPad;
+
+  const height = els.payoff.clientHeight || 230;
+  const plotWidth = Math.max((els.payoff.clientWidth || 320) - 56, 160);
+  const padTop = 18;
+  const padBottom = 8;
+  const innerH = Math.max(height - padTop - padBottom, 40);
+  const ySpan = yMax - yMin || 1;
+  const xSpan = domain.maxPrice - domain.minPrice || 1;
+  const yOf = (pnl) => padTop + (1 - (pnl - yMin) / ySpan) * innerH;
+  const xOf = (price) => ((price - domain.minPrice) / xSpan) * plotWidth;
+  state.payoffMap = { domain, plotWidth };
+
+  const ordered = [...curves.filter((curve) => !curve.primary), ...curves.filter((curve) => curve.primary)];
+  const paths = ordered.map((curve) => {
+    const d = curve.points.map((point, index) => {
+      const cmd = index === 0 ? "M" : "L";
+      return `${cmd}${xOf(point.price).toFixed(1)},${yOf(point.pnl).toFixed(1)}`;
+    }).join(" ");
+    return `<path d="${d}" fill="none" stroke="${curve.color}" stroke-width="${curve.primary ? 2.75 : 1.75}" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"></path>`;
+  }).join("");
+  const dots = curves.map((curve) => {
+    const value = Math.max(curve.right === "call" ? target - curve.strike : curve.strike - target, 0);
+    const pnl = value - (curve.premium || 0);
+    return `<circle cx="${xOf(target).toFixed(1)}" cy="${yOf(pnl).toFixed(1)}" r="${curve.primary ? 4.5 : 3.5}" fill="${curve.color}" stroke="#0c1117" stroke-width="1.5"></circle>`;
+  }).join("");
+  const zeroY = yOf(0);
+  const spotX = xOf(spot);
+  const targetX = xOf(target);
+  const targetLabelX = targetX > plotWidth - 64 ? targetX - 4 : targetX + 4;
+  const targetAnchor = targetX > plotWidth - 64 ? "end" : "start";
+  const yLabels = [
+    { value: yMax, y: yOf(yMax) },
+    { value: 0, y: zeroY },
+    { value: yMin, y: yOf(yMin) },
+  ];
+
+  els.payoffLegend.innerHTML = curves.map((curve) => {
+    const ret = curve.premium > 0 && curve.returnPct != null ? Calc.formatPct(curve.returnPct) : "—";
+    return `<span class="legend-item"><i style="background:${curve.color}"></i>${legName(curve)} <em>${ret}</em></span>`;
+  }).join("");
+
+  els.payoff.innerHTML = `
+    <div class="chart-yaxis payoff-yaxis" aria-hidden="true">
+      ${yLabels.map((label) => `<span style="top:${(label.y / height) * 100}%">${formatSignedMoney(label.value, Math.abs(label.value) >= 10 ? 1 : 2)}</span>`).join("")}
+    </div>
+    <div class="chart-plot">
+      <svg viewBox="0 0 ${plotWidth} ${height}" preserveAspectRatio="none" role="img" aria-label="Payoff at expiry">
+        <line x1="0" x2="${plotWidth}" y1="${zeroY.toFixed(1)}" y2="${zeroY.toFixed(1)}" stroke="rgba(232,238,246,0.35)" stroke-width="1" vector-effect="non-scaling-stroke"></line>
+        <line x1="${spotX.toFixed(1)}" x2="${spotX.toFixed(1)}" y1="0" y2="${height}" stroke="rgba(232,238,246,0.4)" stroke-width="1" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"></line>
+        <line x1="${targetX.toFixed(1)}" x2="${targetX.toFixed(1)}" y1="0" y2="${height}" stroke="#f0c35b" stroke-width="1.5" vector-effect="non-scaling-stroke"></line>
+        ${paths}
+        ${dots}
+        <text x="${Math.min(plotWidth - 28, spotX + 4)}" y="12" fill="#8b98a8" font-size="10">Now</text>
+        <text x="${targetLabelX.toFixed(1)}" y="24" fill="#f0c35b" font-size="10" text-anchor="${targetAnchor}">${formatPrice(target)}</text>
+      </svg>
+      <div class="payoff-tip" hidden></div>
+    </div>
+  `;
+
+  if (retry && (els.payoff.clientWidth || 0) < 40) requestAnimationFrame(() => renderPayoff(false));
+}
+
+function priceFromClientX(clientX) {
+  const plot = els.payoff.querySelector(".chart-plot");
+  const map = state.payoffMap;
+  if (!plot || !map) return state.targetPrice;
+  const rect = plot.getBoundingClientRect();
+  const t = Calc.clamp((clientX - rect.left) / (rect.width || 1), 0, 1);
+  return map.domain.minPrice + t * (map.domain.maxPrice - map.domain.minPrice);
+}
+
+function updatePayoffTip(price) {
+  const tip = els.payoff.querySelector(".payoff-tip");
+  const snap = legSnapshot(primarySpec());
+  if (!tip || !snap || snap.pending || snap.missing || state.targetPrice == null) return;
+  const value = Math.max(snap.right === "call" ? price - snap.strike : snap.strike - price, 0);
+  const pnl = (value - (snap.premium || 0)) * 100;
+  tip.hidden = false;
+  tip.textContent = `${formatPrice(price)} · ${formatSignedContract(pnl)}`;
+  const map = state.payoffMap;
+  const t = (price - map.domain.minPrice) / (map.domain.maxPrice - map.domain.minPrice || 1);
+  tip.style.left = `${Math.min(78, Math.max(12, t * 100))}%`;
+}
+
+function setTarget(price, { touched = true } = {}) {
+  if (!state.info || !Number.isFinite(price)) return;
+  const step = priceStep(state.info.currentPrice);
+  const bounds = targetBounds();
+  state.targetPrice = Calc.clamp(snapPrice(price, step), bounds.min, bounds.max);
+  if (touched) state.targetTouched = true;
+  renderTargetControls();
+  renderHero();
+  renderPayoff();
+  renderCompareNumbers();
+  queueUrl();
+}
+
+function strikesFor(expiry, right) {
+  const chain = chainFor(expiry);
+  if (!chain) return [];
+  const rows = right === "put" ? chain.puts : chain.calls;
+  return rows.map((row) => row.strike);
+}
+
+function editorHtml(index) {
+  const slot = materializedSlot(index);
+  const color = LEG_COLORS[index + 1];
+  if (slot.empty) return "";
+  if (slot.hidden) {
+    return `<button type="button" class="add-leg" data-slot="${index}" data-action="add">Add a strike</button>`;
+  }
+  const strikeOptions = strikesFor(slot.expiry, slot.right);
+  const strikes = strikeOptions.length ? strikeOptions : [slot.strike];
+  const expiryOptions = state.expirations.length ? state.expirations : [slot.expiry];
+  return `
+    <div class="leg-editor" style="--leg:${color}">
+      <div class="leg-editor-top">
+        <strong><i class="dot" style="background:${color}"></i>Compare</strong>
+        <button type="button" class="text-btn" data-slot="${index}" data-action="hide">Remove</button>
+      </div>
+      <div class="segmented mini">
+        <button type="button" data-slot="${index}" data-action="right" data-right="call" class="${slot.right === "call" ? "active" : ""}">Call</button>
+        <button type="button" data-slot="${index}" data-action="right" data-right="put" class="${slot.right === "put" ? "active" : ""}">Put</button>
+      </div>
+      <label>Strike
+        <select data-slot="${index}" data-field="strike">
+          ${strikes.map((strike) => `<option value="${strike}" ${strike === slot.strike ? "selected" : ""}>${formatPrice(strike)}</option>`).join("")}
+        </select>
+      </label>
+      <label>Expiration
+        <select data-slot="${index}" data-field="expiry">
+          ${expiryOptions.map((date) => `<option value="${date}" ${date === slot.expiry ? "selected" : ""}>${expiryLabel(date)}</option>`).join("")}
+        </select>
+      </label>
+    </div>
+  `;
+}
+
+function renderCompareEditors() {
+  els.compareEditors.innerHTML = [0, 1].map((index) => editorHtml(index)).join("");
+  ensureCompareChains();
+}
+
+function cellHtml(snap, html) {
+  if (!snap || snap.pending) return "…";
+  if (snap.missing || !(snap.premium > 0)) return "—";
+  return html;
+}
+
+function pair(main, sub) {
+  return `<span class="pair"><b>${main}</b><small>${sub}</small></span>`;
+}
+
+function renderCompareNumbers() {
+  const snaps = activeLegs().map(legSnapshot);
+  renderInsight(snaps);
+  if (!snaps.length) {
+    els.compareTable.innerHTML = "";
+    return;
+  }
+  const targetLabel = formatPrice(state.targetPrice);
+  let bestIndex = -1;
+  snaps.forEach((snap, index) => {
+    if (snap.returnPct == null) return;
+    if (bestIndex < 0 || snap.returnPct > snaps[bestIndex].returnPct + 0.05) bestIndex = index;
+  });
+  const rows = [
+    ["Premium", (snap) => cellHtml(snap, pair(formatPrice(snap.premium), formatUnsignedContract(snap.maxLossPerContract)))],
+    ["Breakeven", (snap) => cellHtml(snap, formatPrice(snap.breakeven))],
+    ["Max loss", (snap) => cellHtml(snap, formatUnsignedContract(snap.maxLossPerContract))],
+    [`Worth at ${targetLabel}`, (snap) => cellHtml(snap, pair(formatPrice(snap.value), formatUnsignedContract(snap.value * 100)))],
+    [`Return at ${targetLabel}`, (snap, index) => cellHtml(snap, pair(Calc.formatPct(snap.returnPct), formatSignedContract(snap.pnlPerContract))), "return"],
+    ["IV", (snap) => cellHtml(snap, `${snap.option.impliedVolatility.toFixed(1)}%`)],
+    ["Expiration", (snap) => snap.pending ? "…" : expiryLabel(snap.expiry)],
+    ["Delta", (snap) => cellHtml(snap, formatDelta(snap.delta))],
+    ["Gamma", (snap) => cellHtml(snap, snap.gamma == null ? "—" : snap.gamma.toFixed(3))],
+    ["Theta / day", (snap) => cellHtml(snap, formatTheta(snap.theta))],
+    ["Vega / 1% IV", (snap) => cellHtml(snap, formatVega(snap.vega))],
+  ];
+  const head = snaps.map((snap) => `
+    <th style="color:${snap.color}">
+      <span class="dot" style="background:${snap.color}"></span>${legName(snap)}
+      <small>${snap.primary ? "Chosen" : "Compare"}</small>
+    </th>
+  `).join("");
+  const body = rows.map(([label, render, kind]) => {
+    const cells = snaps.map((snap, index) => {
+      const best = kind === "return" && index === bestIndex ? "best" : "";
+      return `<td class="${best}">${render(snap, index)}</td>`;
+    }).join("");
+    return `<tr><th>${label}</th>${cells}</tr>`;
+  }).join("");
+  els.compareTable.innerHTML = `<thead><tr><th></th>${head}</tr></thead><tbody>${body}</tbody>`;
+}
+
+function renderInsight(snaps) {
+  const priced = snaps.filter((snap) => !snap.pending && !snap.missing && snap.premium > 0 && snap.returnPct != null);
+  if (priced.length < 2) {
+    els.compareInsight.textContent = "Add another strike to see which contract makes more at your target.";
+    return;
+  }
+  const primary = priced.find((snap) => snap.primary) ?? priced[0];
+  const best = priced.reduce((left, right) => (right.returnPct > left.returnPct ? right : left));
+  const other = best === primary
+    ? priced.filter((snap) => snap !== primary).reduce((left, right) => (right.returnPct > left.returnPct ? right : left))
+    : primary;
+  const at = formatPrice(state.targetPrice);
+  const name = (snap) => `${formatPrice(snap.strike)} ${snap.right}`;
+  const risk = (snap) => formatUnsignedContract(snap.maxLossPerContract);
+  if (best === primary) {
+    els.compareInsight.textContent = `Your ${name(primary)} returns ${Calc.formatPct(primary.returnPct)} if the stock is at ${at} by expiry. The ${name(other)} returns ${Calc.formatPct(other.returnPct)}, risks ${risk(other)} per contract, and breaks even at ${formatPrice(other.breakeven)}.`;
+  } else {
+    els.compareInsight.textContent = `At ${at}, the ${name(best)} returns ${Calc.formatPct(best.returnPct)}, ahead of your ${name(primary)} at ${Calc.formatPct(primary.returnPct)}. It risks ${risk(best)} per contract and breaks even at ${formatPrice(best.breakeven)}.`;
+  }
+}
+
 function headerCell(column) {
   if (column.helpKey) {
     return `<th><button type="button" class="th-help" data-help="${column.helpKey}">${column.label}</button></th>`;
@@ -535,7 +1137,7 @@ function headerCell(column) {
   return `<th>${column.label}</th>`;
 }
 
-function renderStrikes() {
+function renderChainTable() {
   const rows = currentOptions();
   const spot = state.info?.currentPrice ?? 0;
   const thead = els.chainTable.querySelector("thead");
@@ -543,13 +1145,11 @@ function renderStrikes() {
   if (!rows.length) {
     thead.innerHTML = "";
     tbody.innerHTML = `<tr><td class="chain-empty" colspan="6">No contracts for this expiration.</td></tr>`;
-    updateBottomBar();
     return;
   }
   if (state.selectedStrike == null || !rows.some((row) => row.strike === state.selectedStrike)) {
     state.selectedStrike = rows[Calc.nearestIndex(rows.map((row) => row.strike), spot)].strike;
   }
-
   const maxVol = Calc.maxMetric(rows, "volume");
   const maxOi = Calc.maxMetric(rows, "openInterest");
   thead.innerHTML = `<tr><th>Strike</th>${CHAIN_COLUMNS.map(headerCell).join("")}</tr>`;
@@ -560,7 +1160,6 @@ function renderStrikes() {
     return `<tr class="${[selected, atm].filter(Boolean).join(" ")}" data-strike="${row.strike}" tabindex="0" aria-selected="${row.strike === state.selectedStrike ? "true" : "false"}"><td>${Calc.money(row.strike)}</td>${cells}</tr>`;
   }).join("");
   revealSelectedRow();
-  updateBottomBar();
 }
 
 function revealSelectedRow() {
@@ -588,16 +1187,6 @@ function chainCell(row, field, maxVol, maxOi) {
 function barCell(value, max, kind) {
   const width = Calc.barWidthPct(value, max);
   return `<td class="bar-cell"><div class="bar-metric"><span>${value ? Calc.compactNumber(value) : "—"}</span><div class="bar-track" aria-hidden="true"><div class="bar ${kind}" style="width:${width.toFixed(1)}%"></div></div></div></td>`;
-}
-
-function updateBottomBar() {
-  const option = selectedOption();
-  const show = state.view === "trade" && option != null;
-  els.calculateBar.hidden = !show;
-  if (!show) return;
-  const premium = Calc.optionPremium(option);
-  els.selectedContract.textContent = `${Calc.money(option.strike)} ${state.right === "call" ? "Call" : "Put"}`;
-  els.selectedPremium.textContent = premium > 0 ? `Premium ${Calc.money(premium)}` : "No premium yet";
 }
 
 function syncStrikeWindowInputs() {
@@ -637,7 +1226,7 @@ function setStrikeWindow(minStrike, maxStrike, { rebuild = true, sync = true } =
   }
   syncStrikeWindowInputs();
   if (rebuild) rebuildHeatmap();
-  if (sync) syncUrl({ push: false, replace: true });
+  if (sync) syncUrl({ replace: true });
 }
 
 function initStrikeWindow(option) {
@@ -657,14 +1246,29 @@ function initStrikeWindow(option) {
   syncStrikeWindowInputs();
 }
 
+function contractKey() {
+  return `${state.ticker}|${state.selectedExpiry}|${state.right}|${state.selectedStrike}`;
+}
+
+function ensureWindow() {
+  const option = selectedOption();
+  if (!option) return;
+  const key = contractKey();
+  if (state.windowKey === key) return;
+  initStrikeWindow(option);
+  if (state.pendingMin != null && state.pendingMax != null && state.pendingMin < state.pendingMax) {
+    setStrikeWindow(state.pendingMin, state.pendingMax, { rebuild: false, sync: false });
+  }
+  state.pendingMin = null;
+  state.pendingMax = null;
+  state.windowKey = key;
+}
+
 function renderHeatmap() {
   const grid = state.heatmap;
-  if (!grid) return;
   const option = selectedOption();
+  if (!grid || !option || !state.info) return;
   const spot = state.info.currentPrice;
-  els.resultTitle.textContent = `${state.info.symbol} ${Calc.money(option.strike)} ${state.right === "call" ? "Call" : "Put"}`;
-  els.resultSub.textContent = `${state.selectedExpiry} · paid ${Calc.money(grid.premium)}`;
-
   const cols = grid.columns.length;
   els.heatmap.style.gridTemplateColumns = `minmax(48px, 14%) repeat(${cols}, minmax(0, 1fr))`;
   els.heatmap.style.gridTemplateRows = `auto repeat(${grid.rows.length}, minmax(0, 1fr))`;
@@ -720,13 +1324,146 @@ function rebuildHeatmap() {
   renderHeatmap();
 }
 
-async function loadTicker(ticker, { expiry, right, strike, pushUrl = true } = {}) {
+function present() {
+  renderQuote();
+  ensureWindow();
+  renderScenario();
+  renderHero();
+  renderPayoff();
+  renderCompareEditors();
+  renderCompareNumbers();
+  renderChainTable();
+  rebuildHeatmap();
+  if (els.history.open) renderChart();
+}
+
+function scheduleTerm() {
+  clearTimeout(state.termTimer);
+  state.termTimer = setTimeout(() => {
+    refreshTerm();
+  }, 180);
+}
+
+async function refreshTerm() {
+  const option = selectedOption();
+  if (!option || !state.selectedExpiry || !state.ticker) return;
+  const key = `${state.ticker}|${state.selectedExpiry}|${option.strike}|${state.right}`;
+  if (state.termKey === key && state.term.length) return;
+  const token = ++state.termToken;
+  try {
+    const payload = await api(
+      `/api/iv-term?ticker=${encodeURIComponent(state.ticker)}&expiry=${encodeURIComponent(state.selectedExpiry)}&strike=${encodeURIComponent(option.strike)}&right=${encodeURIComponent(state.right)}`,
+    );
+    if (token !== state.termToken) return;
+    if (key !== `${state.ticker}|${state.selectedExpiry}|${state.selectedStrike}|${state.right}`) return;
+    state.term = payload.term ?? [];
+    state.termKey = key;
+    rebuildHeatmap();
+  } catch {
+    // The grid still prices off this contract's own IV.
+  }
+}
+
+async function fetchChain(expiry) {
+  const payload = await api(
+    `/api/options?ticker=${encodeURIComponent(state.ticker)}&date=${encodeURIComponent(expiry)}`,
+  );
+  const chain = {
+    calls: payload.calls ?? [],
+    puts: payload.puts ?? [],
+    atmCallIv: payload.atmCallIv ?? null,
+    atmPutIv: payload.atmPutIv ?? null,
+  };
+  state.chainCache[expiry] = chain;
+  return chain;
+}
+
+async function ensureCompareChains() {
+  const expiries = new Set();
+  [0, 1].forEach((index) => {
+    const slot = materializedSlot(index);
+    if (slot && !slot.hidden && !slot.empty && slot.expiry && slot.expiry !== state.selectedExpiry && !state.chainCache[slot.expiry]) {
+      expiries.add(slot.expiry);
+    }
+  });
+  await Promise.all([...expiries].map(async (expiry) => {
+    if (state.chainLoading[expiry]) return;
+    state.chainLoading[expiry] = true;
+    try {
+      await fetchChain(expiry);
+      [0, 1].forEach((index) => {
+        const slot = state.compare[index];
+        if (!slot || slot.auto !== false || slot.hidden || slot.expiry !== expiry) return;
+        const chain = state.chainCache[expiry];
+        const rows = slot.right === "put" ? chain.puts : chain.calls;
+        if (rows.length && !rows.some((row) => row.strike === slot.strike)) {
+          slot.strike = rows.map((row) => row.strike)[Calc.nearestIndex(rows.map((row) => row.strike), slot.strike)];
+        }
+      });
+      renderCompareEditors();
+      renderPayoff();
+      renderCompareNumbers();
+    } catch (error) {
+      setBanner(els.analyzerError, error.message);
+    } finally {
+      state.chainLoading[expiry] = false;
+    }
+  }));
+}
+
+async function loadChain() {
+  const expiry = state.selectedExpiry;
+  const previous = state.loadedExpiry;
+  els.expiry.disabled = true;
+  try {
+    const chain = await fetchChain(expiry);
+    if (expiry !== state.selectedExpiry) return;
+    state.calls = chain.calls;
+    state.puts = chain.puts;
+    state.atmCallIv = chain.atmCallIv;
+    state.atmPutIv = chain.atmPutIv;
+    state.loadedExpiry = expiry;
+    if (!currentOptions().some((row) => row.strike === state.selectedStrike)) {
+      const strikes = chainStrikes();
+      const anchor = state.selectedStrike ?? state.info.currentPrice;
+      state.selectedStrike = strikes.length ? strikes[Calc.nearestIndex(strikes, anchor)] : null;
+    }
+    if (!state.targetTouched) {
+      state.targetPrice = Calc.suggestedTarget(state.info.currentPrice, state.right === "call");
+    }
+    state.term = [];
+    state.termKey = "";
+    state.windowKey = "";
+    setBanner(els.analyzerError, "");
+    present();
+    scheduleTerm();
+  } catch (error) {
+    if (previous && previous !== expiry) {
+      state.selectedExpiry = previous;
+      renderExpiries();
+    }
+    setBanner(els.analyzerError, error.message);
+  } finally {
+    els.expiry.disabled = false;
+  }
+}
+
+async function loadTicker(ticker, {
+  expiry,
+  right,
+  strike,
+  target = null,
+  compare = null,
+  pushUrl = true,
+} = {}) {
   const symbol = ticker.trim().toUpperCase();
   if (!symbol) return;
+  const cameFromPick = state.view === "pick";
+  const sameTicker = state.ticker === symbol && state.info;
   els.lookup.disabled = true;
   els.refresh.disabled = true;
   setBanner(els.pickError, "");
-  toast("Loading stock…");
+  toast(sameTicker ? "Refreshing…" : "Loading stock…");
   try {
     const [stock, expirationsPayload] = await Promise.all([
       api(`/api/stock?ticker=${encodeURIComponent(symbol)}`),
@@ -736,32 +1473,55 @@ async function loadTicker(ticker, { expiry, right, strike, pushUrl = true } = {}
     state.info = stock.info;
     state.history = stock.history ?? [];
     state.expirations = expirationsPayload.expirationDates ?? [];
+    state.chainCache = {};
+    state.chainLoading = {};
+    state.term = [];
+    state.termKey = "";
+    state.windowKey = "";
     if (expiry && state.expirations.includes(expiry)) state.selectedExpiry = expiry;
-    else state.selectedExpiry = pickDefaultExpiry(state.expirations);
+    else if (!sameTicker || !state.expirations.includes(state.selectedExpiry)) {
+      state.selectedExpiry = pickDefaultExpiry(state.expirations);
+    }
     if (right === "put" || right === "call") state.right = right;
-    state.selectedStrike = strike ?? null;
-    state.heatmap = null;
+    if (strike != null) state.selectedStrike = strike;
+    else if (!sameTicker) state.selectedStrike = null;
+    if (!sameTicker) {
+      state.compare = compare ?? defaultCompare();
+      state.targetTouched = target != null && Number.isFinite(target);
+      state.targetPrice = state.targetTouched
+        ? target
+        : Calc.suggestedTarget(stock.info.currentPrice, state.right === "call");
+    } else {
+      if (compare) state.compare = compare;
+      if (target != null && Number.isFinite(target)) {
+        state.targetPrice = target;
+        state.targetTouched = true;
+      }
+    }
     els.input.value = symbol;
+    els.switchInput.value = symbol;
+    showView("analyzer", { push: false });
     renderQuote();
-    renderExpiries();
-    renderType();
-    showView("trade", { push: false });
     if (!state.selectedExpiry) {
-      setBanner(els.tradeError, "No options are listed for this ticker.");
-      els.chainTable.querySelector("thead").innerHTML = "";
-      els.chainTable.querySelector("tbody").innerHTML = "";
+      setBanner(els.analyzerError, "No options are listed for this ticker.");
+      renderQuote();
       return;
     }
     await loadChain();
-    if (strike != null && currentOptions().some((row) => row.strike === strike)) {
+    if (strike != null && currentOptions().some((row) => row.strike === strike) && state.selectedStrike !== strike) {
       state.selectedStrike = strike;
-      renderStrikes();
+      present();
+      scheduleTerm();
     }
-    setBanner(els.tradeError, "");
-    if (pushUrl) syncUrl({ replace: true });
+    if (cameFromPick) window.scrollTo(0, 0);
+    if (pushUrl && cameFromPick) syncUrl({ push: true });
+    else if (pushUrl) syncUrl({ replace: true });
   } catch (error) {
-    setBanner(els.pickError, error.message);
-    showView("pick", { push: false });
+    if (sameTicker && state.info) setBanner(els.analyzerError, error.message);
+    else {
+      setBanner(els.pickError, error.message);
+      showView("pick", { push: false });
+    }
   } finally {
     els.lookup.disabled = false;
     els.refresh.disabled = false;
@@ -769,51 +1529,54 @@ async function loadTicker(ticker, { expiry, right, strike, pushUrl = true } = {}
   }
 }
 
-async function loadChain() {
-  toast("Loading options…");
-  const payload = await api(
-    `/api/options?ticker=${encodeURIComponent(state.ticker)}&date=${encodeURIComponent(state.selectedExpiry)}`,
-  );
-  state.calls = payload.calls ?? [];
-  state.puts = payload.puts ?? [];
-  state.atmCallIv = payload.atmCallIv ?? null;
-  state.atmPutIv = payload.atmPutIv ?? null;
-  renderQuote();
-  renderStrikes();
-  toast("");
+function selectStrike(strike, { focus = false, sync = true } = {}) {
+  if (!Number.isFinite(strike) || strike === state.selectedStrike) {
+    if (focus) els.chainTable.querySelector("tr.selected")?.focus();
+    return;
+  }
+  state.selectedStrike = strike;
+  state.term = [];
+  state.termKey = "";
+  state.windowKey = "";
+  present();
+  if (focus) els.chainTable.querySelector("tr.selected")?.focus();
+  if (sync) queueUrl();
+  scheduleTerm();
 }
 
-async function calculate({ strikeMin = null, strikeMax = null, pushUrl = true } = {}) {
-  const option = selectedOption();
-  if (!option) {
-    setBanner(els.tradeError, "Select a call or put strike first.");
-    return;
+function setRight(right) {
+  if (state.right === right) return;
+  state.right = right;
+  if (!currentOptions().some((row) => row.strike === state.selectedStrike)) {
+    const strikes = chainStrikes();
+    const anchor = state.selectedStrike ?? state.info?.currentPrice ?? 0;
+    state.selectedStrike = strikes.length ? strikes[Calc.nearestIndex(strikes, anchor)] : null;
   }
-  if (!Calc.optionPremium(option)) {
-    setBanner(els.tradeError, "That option has no usable premium yet.");
-    return;
+  if (!state.targetTouched && state.info) {
+    state.targetPrice = Calc.suggestedTarget(state.info.currentPrice, right === "call");
   }
-  els.calculate.disabled = true;
-  toast("Calculating…");
-  try {
-    const payload = await api(
-      `/api/iv-term?ticker=${encodeURIComponent(state.ticker)}&expiry=${encodeURIComponent(state.selectedExpiry)}&strike=${encodeURIComponent(option.strike)}&right=${encodeURIComponent(state.right)}`,
-    );
-    state.term = payload.term ?? [];
-    initStrikeWindow(option);
-    if (strikeMin != null && strikeMax != null && strikeMin < strikeMax) {
-      setStrikeWindow(strikeMin, strikeMax, { rebuild: false, sync: false });
+  state.term = [];
+  state.termKey = "";
+  state.windowKey = "";
+  present();
+  queueUrl();
+  scheduleTerm();
+}
+
+function setCompare(index, patch) {
+  const base = materializedSlot(index);
+  const next = { ...base, ...patch, auto: false, hidden: patch.hidden ?? false, empty: false };
+  if ((patch.expiry || patch.right) && chainFor(next.expiry)) {
+    const strikes = strikesFor(next.expiry, next.right);
+    if (strikes.length && !strikes.includes(next.strike)) {
+      next.strike = strikes[Calc.nearestIndex(strikes, next.strike)];
     }
-    rebuildHeatmap();
-    showView("results", { push: false });
-    if (pushUrl) syncUrl({ push: true });
-    setBanner(els.tradeError, "");
-  } catch (error) {
-    setBanner(els.tradeError, error.message);
-  } finally {
-    els.calculate.disabled = false;
-    toast("");
   }
+  state.compare[index] = next;
+  renderCompareEditors();
+  renderPayoff();
+  renderCompareNumbers();
+  queueUrl();
 }
 
 function openHelp(key) {
@@ -831,14 +1594,18 @@ els.form.addEventListener("submit", (event) => {
   loadTicker(els.input.value);
 });
 
+els.switchForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  loadTicker(els.switchInput.value);
+});
+
 els.chips.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-ticker]");
   if (button) loadTicker(button.dataset.ticker);
 });
 
 els.backPick.addEventListener("click", goBack);
-els.backTrade.addEventListener("click", goBack);
-els.refresh.addEventListener("click", () => loadTicker(state.ticker));
+els.refresh.addEventListener("click", () => loadTicker(state.ticker, { pushUrl: false }));
 
 els.periods.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-period]");
@@ -849,32 +1616,15 @@ els.periods.addEventListener("click", (event) => {
   syncUrl({ replace: true });
 });
 
-els.expiry.addEventListener("change", async () => {
+els.expiry.addEventListener("change", () => {
   state.selectedExpiry = els.expiry.value;
-  state.selectedStrike = null;
-  try {
-    await loadChain();
-    syncUrl({ replace: true });
-  } catch (error) {
-    setBanner(els.tradeError, error.message);
-  }
+  loadChain().then(() => {
+    if (!state.restoring) queueUrl();
+  });
 });
 
-els.typeCall.addEventListener("click", () => {
-  state.right = "call";
-  renderType();
-  renderQuote();
-  renderStrikes();
-  syncUrl({ replace: true });
-});
-
-els.typePut.addEventListener("click", () => {
-  state.right = "put";
-  renderType();
-  renderQuote();
-  renderStrikes();
-  syncUrl({ replace: true });
-});
+els.typeCall.addEventListener("click", () => setRight("call"));
+els.typePut.addEventListener("click", () => setRight("put"));
 
 els.chartToggle.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-chart]");
@@ -883,6 +1633,108 @@ els.chartToggle.addEventListener("click", (event) => {
   [...els.chartToggle.querySelectorAll("button")].forEach((node) => node.classList.toggle("active", node === button));
   renderChart();
   syncUrl({ replace: true });
+});
+
+els.strikeScroll.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-strike]");
+  if (!button) return;
+  selectStrike(Number(button.dataset.strike));
+});
+
+els.moveChips.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-move]");
+  if (!button || !state.info) return;
+  const pct = Number(button.dataset.move);
+  setTarget(state.info.currentPrice * (1 + pct / 100));
+});
+
+els.targetRange.addEventListener("input", () => {
+  setTarget(Number(els.targetRange.value));
+});
+
+els.targetInput.addEventListener("input", () => {
+  const value = Number(els.targetInput.value);
+  if (!Number.isFinite(value) || value <= 0 || !state.info) return;
+  state.targetPrice = value;
+  state.targetTouched = true;
+  els.targetRange.value = String(Calc.clamp(value, Number(els.targetRange.min), Number(els.targetRange.max)));
+  const pct = ((value - state.info.currentPrice) / state.info.currentPrice) * 100;
+  els.targetMove.className = `target-move ${pct > 0.05 ? "up" : pct < -0.05 ? "down" : ""}`;
+  els.targetMove.textContent = formatMove(value, state.info.currentPrice);
+  renderMoveChips();
+  renderHero();
+  renderPayoff();
+  renderCompareNumbers();
+});
+
+els.targetInput.addEventListener("change", () => {
+  setTarget(Number(els.targetInput.value));
+});
+
+els.payoff.addEventListener("pointerdown", (event) => {
+  const plot = els.payoff.querySelector(".chart-plot");
+  if (!plot || !plot.contains(event.target)) return;
+  els.payoff.setPointerCapture(event.pointerId);
+  setTarget(priceFromClientX(event.clientX));
+});
+
+els.payoff.addEventListener("pointermove", (event) => {
+  const plot = els.payoff.querySelector(".chart-plot");
+  if (!plot) return;
+  if (els.payoff.hasPointerCapture(event.pointerId)) {
+    setTarget(priceFromClientX(event.clientX));
+    return;
+  }
+  if (event.pointerType === "mouse" && plot.contains(event.target)) {
+    updatePayoffTip(snapPrice(priceFromClientX(event.clientX), priceStep(state.info?.currentPrice || 1)));
+  }
+});
+
+els.payoff.addEventListener("pointerup", (event) => {
+  if (els.payoff.hasPointerCapture(event.pointerId)) els.payoff.releasePointerCapture(event.pointerId);
+});
+
+els.payoff.addEventListener("pointerleave", () => {
+  const tip = els.payoff.querySelector(".payoff-tip");
+  if (tip) tip.hidden = true;
+});
+
+els.compareReset.addEventListener("click", () => {
+  state.compare = defaultCompare();
+  renderCompareEditors();
+  renderPayoff();
+  renderCompareNumbers();
+  queueUrl();
+});
+
+els.compareEditors.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-slot]");
+  if (!button) return;
+  const index = Number(button.dataset.slot);
+  const action = button.dataset.action;
+  if (action === "hide") {
+    state.compare[index] = { ...materializedSlot(index), hidden: true, auto: false, empty: false };
+    renderCompareEditors();
+    renderPayoff();
+    renderCompareNumbers();
+    queueUrl();
+  } else if (action === "add") {
+    state.compare[index] = { auto: true, hidden: false };
+    renderCompareEditors();
+    renderPayoff();
+    renderCompareNumbers();
+    queueUrl();
+  } else if (action === "right") {
+    setCompare(index, { right: button.dataset.right === "put" ? "put" : "call" });
+  }
+});
+
+els.compareEditors.addEventListener("change", (event) => {
+  const field = event.target.dataset.field;
+  const index = Number(event.target.dataset.slot);
+  if (!Number.isInteger(index) || !field) return;
+  if (field === "strike") setCompare(index, { strike: Number(event.target.value) });
+  if (field === "expiry") setCompare(index, { expiry: event.target.value });
 });
 
 els.chainTable.addEventListener("click", (event) => {
@@ -913,16 +1765,6 @@ els.chainTable.addEventListener("keydown", (event) => {
     selectStrike(Number(row.dataset.strike), { focus: true });
   }
 });
-
-function selectStrike(strike, { focus = false, sync = true } = {}) {
-  if (!Number.isFinite(strike)) return;
-  state.selectedStrike = strike;
-  renderStrikes();
-  if (focus) els.chainTable.querySelector("tr.selected")?.focus();
-  if (sync) syncUrl({ replace: true });
-}
-
-els.calculate.addEventListener("click", calculate);
 
 els.strikeMinRange.addEventListener("input", () => {
   const min = Number(els.strikeMinRange.value);
@@ -960,14 +1802,21 @@ els.modePct.addEventListener("click", () => {
   syncUrl({ replace: true });
 });
 
+els.history.addEventListener("toggle", () => {
+  if (!els.history.open) return;
+  requestAnimationFrame(() => renderChart());
+});
+
 els.helpClose.addEventListener("click", () => els.helpModal.close());
 els.helpModal.addEventListener("click", (event) => {
   if (event.target === els.helpModal) els.helpModal.close();
 });
 
 window.addEventListener("resize", () => {
-  if (!els.trade.hidden) renderChart();
-  if (!els.results.hidden) rebuildHeatmap();
+  if (els.analyzer.hidden) return;
+  renderPayoff();
+  rebuildHeatmap();
+  if (els.history.open) renderChart();
 });
 
-restoreFromUrl({ push: false });
+restoreFromUrl();
