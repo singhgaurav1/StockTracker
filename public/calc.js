@@ -369,7 +369,7 @@ export function heatmapLeverageTooltip({ multiple, pct, stockPct }) {
     }
     return "Not enough data to compare this option with holding the stock.";
   }
-  return `${formatMultiple(multiple)} the return of holding the stock with the same money. The option returned ${optionText} while the stock returned ${stockText}.`;
+  return `${formatMultiple(multiple)} leverage versus holding the stock with the same money. The option returned ${optionText} while the stock returned ${stockText}.`;
 }
 
 export function heatColor(multiple, pct) {

@@ -97,7 +97,7 @@ test("heatmap multiple is leverage versus holding the stock", () => {
   assert.ok(Math.abs(put.cells[putRow90][0].multiple - -15) < 1e-9);
   assert.match(
     Calc.heatmapLeverageTooltip(call.cells[row110][col]),
-    /15x the return of holding the stock/,
+    /15x leverage versus holding the stock/,
   );
   assert.match(
     Calc.heatmapLeverageTooltip(call.cells[row100][col]),
