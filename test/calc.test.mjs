@@ -41,8 +41,69 @@ test("IV interpolation uses the term structure", () => {
     { date: "2026-09-04", iv: 40 },
     { date: "2026-10-16", iv: 20 },
   ];
-  const mid = Calc.interpolateIv(term, "2026-09-25");
+  const mid = Calc.interpolateIv(term, "2026-09-25", "2026-09-01");
   assert.equal(mid > 20 && mid < 40, true);
+});
+
+test("leverage versus stock is option return over stock return", () => {
+  assert.equal(Calc.leverageVsStock(150, 10), 15);
+  assert.equal(Calc.leverageVsStock(-100, -10), 10);
+  assert.equal(Calc.leverageVsStock(150, -10), -15);
+  assert.equal(Calc.leverageVsStock(20, 0), null);
+  assert.equal(Calc.leverageVsStock(80, 0.4), null);
+  assert.equal(Calc.leverageVsStock(80, 0.5), 160);
+  assert.equal(Calc.leverageVsStock(null, 10), null);
+});
+
+test("heatmap multiple is leverage versus holding the stock", () => {
+  const option = { strike: 100, lastPrice: 4, bid: 4, ask: 4, impliedVolatility: 20 };
+  const call = Calc.buildHeatmap({
+    spot: 100,
+    option,
+    isCall: true,
+    expiry: "2026-09-01",
+    today: "2026-09-01",
+    term: [],
+    strikeMin: 90,
+    strikeMax: 110,
+    maxRows: 9,
+    maxCols: 5,
+    strikes: [90, 95, 100, 105, 110],
+  });
+  const col = 0;
+  const row110 = call.rows.indexOf(110);
+  const row100 = call.rows.indexOf(100);
+  const row90 = call.rows.indexOf(90);
+  assert.ok(row110 >= 0 && row100 >= 0 && row90 >= 0);
+  assert.equal(call.cells[row110][col].value, 10);
+  assert.ok(Math.abs(call.cells[row110][col].multiple - 15) < 1e-9);
+  assert.equal(call.cells[row100][col].multiple, null);
+  assert.ok(Math.abs(call.cells[row90][col].multiple - 10) < 1e-9);
+
+  const put = Calc.buildHeatmap({
+    spot: 100,
+    option,
+    isCall: false,
+    expiry: "2026-09-01",
+    today: "2026-09-01",
+    term: [],
+    strikeMin: 90,
+    strikeMax: 110,
+    maxRows: 9,
+    maxCols: 5,
+    strikes: [90, 95, 100, 105, 110],
+  });
+  const putRow90 = put.rows.indexOf(90);
+  assert.ok(Math.abs(put.cells[putRow90][0].multiple - -15) < 1e-9);
+  assert.match(
+    Calc.heatmapLeverageTooltip(call.cells[row110][col]),
+    /15x leverage versus holding the stock/,
+  );
+  assert.match(
+    Calc.heatmapLeverageTooltip(call.cells[row100][col]),
+    /unchanged from today/,
+  );
+  assert.equal(Calc.formatMultiple(-15), "−15x");
 });
 
 test("heatmap rows stay within the requested strike window", () => {
