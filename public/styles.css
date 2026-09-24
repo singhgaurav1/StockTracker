@@ -804,8 +804,30 @@ button:disabled {
   top: 17px;
 }
 
-.heatmap {
+.mode-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mode-help {
+  width: 28px;
+  min-height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  text-decoration: none;
+  font-weight: 800;
+}
+
+.heatmap-stack {
+  position: relative;
   flex: 1;
+  min-height: 52dvh;
+}
+
+.heatmap {
+  height: 100%;
   min-height: 52dvh;
   display: grid;
   gap: 1px;
@@ -814,6 +836,21 @@ button:disabled {
   border-radius: 12px;
   overflow: hidden;
   font-variant-numeric: tabular-nums;
+}
+
+.heatmap-tooltip {
+  position: absolute;
+  max-width: min(240px, calc(100% - 16px));
+  background: rgba(16, 22, 30, 0.96);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: var(--text);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  z-index: 6;
 }
 
 .cell {
@@ -846,6 +883,10 @@ button:disabled {
 .cell.rowhead small {
   color: var(--muted);
   font-weight: 500;
+}
+
+.cell.has-tip {
+  cursor: help;
 }
 
 .cell.spot {
@@ -1343,9 +1384,13 @@ button:disabled {
   flex: none;
 }
 
+.view-analyzer .heatmap-stack,
 .view-analyzer .heatmap {
   height: min(68dvh, 620px);
   min-height: 340px;
+}
+
+.view-analyzer .heatmap-stack {
   margin-top: 10px;
 }
 

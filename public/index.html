@@ -96,7 +96,7 @@
 
         <article class="panel">
           <h2>Across prices and time</h2>
-          <p class="hint">Each cell is what your chosen option is worth at that stock price on that date, before expiry.</p>
+          <p class="hint">Each cell prices your chosen option at that stock price on that date. Multiple is leverage versus holding the stock.</p>
           <div class="controls">
             <div class="strike-window">
               <label class="strike-input">
@@ -113,13 +113,19 @@
                 <input id="strike-max-input" type="number" inputmode="decimal" step="0.5" />
               </label>
             </div>
-            <div class="segmented mini" role="tablist" aria-label="Display mode">
-              <button type="button" id="mode-multiple" class="active">Multiple</button>
-              <button type="button" id="mode-pct">%</button>
+            <div class="mode-controls">
+              <div class="segmented mini" role="tablist" aria-label="Display mode">
+                <button type="button" id="mode-multiple" class="active" title="Option return divided by the stock’s return from today, using the same money. 8× means the option returned eight times as much as holding the stock.">Multiple</button>
+                <button type="button" id="mode-pct">%</button>
+              </div>
+              <button type="button" class="th-help mode-help" data-help="multiple" title="Option return divided by the stock’s return from today, using the same money. 8× means the option returned eight times as much as holding the stock." aria-label="Explain multiple">?</button>
             </div>
           </div>
-          <div id="heatmap" class="heatmap" role="table" aria-label="Option scenario table"></div>
-          <p class="hint">Rows are future stock prices. Columns are dates until expiry.</p>
+          <div class="heatmap-stack">
+            <div id="heatmap" class="heatmap" role="table" aria-label="Option scenario table"></div>
+            <div id="heatmap-tooltip" class="heatmap-tooltip" hidden></div>
+          </div>
+          <p class="hint">Rows are future stock prices. Columns are dates until expiry. Hover a cell to see how the multiple compares with holding the stock.</p>
         </article>
 
         <article class="panel">

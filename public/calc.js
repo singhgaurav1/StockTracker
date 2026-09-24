@@ -315,9 +315,10 @@ export function buildHeatmap({
   const cells = rows.map((price) =>
     columns.map((column) => {
       const value = optionValue(price, strike, column.remaining, column.sigma, isCall);
-      const multiple = premium > 0 ? value / premium : null;
       const pct = premium > 0 ? ((value - premium) / premium) * 100 : null;
-      return { value, multiple, pct };
+      const stockPct = spot > 0 ? ((price - spot) / spot) * 100 : null;
+      const multiple = leverageVsStock(pct, stockPct);
+      return { value, multiple, pct, stockPct };
     }),
   );
 
@@ -334,6 +335,12 @@ export function buildHeatmap({
   };
 }
 
+export function leverageVsStock(optionPct, stockPct) {
+  if (!Number.isFinite(optionPct) || !Number.isFinite(stockPct)) return null;
+  if (Math.abs(stockPct) < 1e-8) return null;
+  return optionPct / stockPct;
+}
+
 export function formatPct(value) {
   if (value == null || !Number.isFinite(value)) return "—";
   if (value <= -99.5) return "−100%";
@@ -344,16 +351,30 @@ export function formatPct(value) {
 }
 
 export function formatMultiple(value) {
-  if (value == null || !Number.isFinite(value) || value < 0) return "—";
-  if (value >= 100) return "99x+";
-  if (value >= 10) return `${value.toFixed(0)}x`;
-  if (value >= 1) return `${value.toFixed(1)}x`;
-  return `${value.toFixed(2)}x`;
+  if (value == null || !Number.isFinite(value)) return "—";
+  const sign = value < 0 ? "−" : "";
+  const abs = Math.abs(value);
+  if (abs >= 100) return `${sign}99x+`;
+  if (abs >= 10) return `${sign}${abs.toFixed(0)}x`;
+  if (abs >= 1) return `${sign}${abs.toFixed(1)}x`;
+  return `${sign}${abs.toFixed(2)}x`;
+}
+
+export function heatmapLeverageTooltip({ multiple, pct, stockPct }) {
+  const optionText = formatPct(pct);
+  const stockText = formatPct(stockPct);
+  if (multiple == null) {
+    if (Number.isFinite(stockPct) && Math.abs(stockPct) < 1e-8) {
+      return `Leverage versus holding the stock is undefined here because the stock is unchanged from today. The option’s return is ${optionText}.`;
+    }
+    return "Not enough data to compare this option with holding the stock.";
+  }
+  return `${formatMultiple(multiple)} the return of holding the stock with the same money. The option returned ${optionText} while the stock returned ${stockText}.`;
 }
 
 export function heatColor(multiple, pct) {
-  const score = multiple != null ? multiple - 1 : pct != null ? pct / 100 : 0;
-  const intensity = clamp(Math.abs(score) / (multiple != null ? 1.5 : 2), 0, 1);
+  const score = pct != null ? pct / 100 : multiple != null ? multiple - 1 : 0;
+  const intensity = clamp(Math.abs(score) / (pct != null ? 2 : 1.5), 0, 1);
   if (score > 0.02) return `rgba(61, 220, 145, ${0.18 + intensity * 0.72})`;
   if (score < -0.02) return `rgba(255, 107, 107, ${0.18 + intensity * 0.72})`;
   return "rgba(232, 238, 246, 0.08)";

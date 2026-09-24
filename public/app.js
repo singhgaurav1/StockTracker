@@ -21,6 +21,10 @@ const HELP_COPY = {
     title: "Open interest",
     body: "The number of outstanding contracts that have not been closed. Rising open interest can mean new positions are being opened at that strike.",
   },
+  multiple: {
+    title: "Multiple vs holding the stock",
+    body: "Each heatmap cell’s multiple is leverage versus holding the stock with the same money: the option’s percent return divided by the stock’s percent return from today’s price. 1× matches holding the stock. 8× means a 10% stock move became an 80% option return. If the stock is unchanged, leverage is undefined.",
+  },
 };
 
 const els = {
@@ -76,6 +80,7 @@ const els = {
   modeMultiple: document.getElementById("mode-multiple"),
   modePct: document.getElementById("mode-pct"),
   heatmap: document.getElementById("heatmap"),
+  heatmapTooltip: document.getElementById("heatmap-tooltip"),
   status: document.getElementById("status"),
   helpModal: document.getElementById("help-modal"),
   helpTitle: document.getElementById("help-title"),
@@ -1264,12 +1269,54 @@ function ensureWindow() {
   state.windowKey = key;
 }
 
+function escapeAttr(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;");
+}
+
+function heatmapTip(cell) {
+  if (state.display === "pct") {
+    const optionText = Calc.formatPct(cell.pct);
+    const stockText = Calc.formatPct(cell.stockPct);
+    return `The option’s return is ${optionText} at this price. Holding the stock from today would return ${stockText}.`;
+  }
+  return Calc.heatmapLeverageTooltip(cell);
+}
+
+function hideHeatmapTooltip() {
+  if (!els.heatmapTooltip) return;
+  els.heatmapTooltip.hidden = true;
+  els.heatmapTooltip.textContent = "";
+}
+
+function showHeatmapTooltip(cell) {
+  const tooltip = els.heatmapTooltip;
+  const stack = tooltip?.parentElement;
+  const tip = cell.dataset.tip;
+  if (!tooltip || !stack || !tip) return;
+  tooltip.hidden = false;
+  tooltip.textContent = tip;
+  const stackBox = stack.getBoundingClientRect();
+  const cellBox = cell.getBoundingClientRect();
+  const tipBox = tooltip.getBoundingClientRect();
+  let left = cellBox.left - stackBox.left + cellBox.width / 2 - tipBox.width / 2;
+  left = Math.max(4, Math.min(left, stackBox.width - tipBox.width - 4));
+  const above = cellBox.top - stackBox.top - tipBox.height - 8;
+  const below = cellBox.bottom - stackBox.top + 8;
+  const top = above >= 4 ? above : below;
+  tooltip.style.left = `${left}px`;
+  tooltip.style.top = `${top}px`;
+}
+
 function renderHeatmap() {
   const grid = state.heatmap;
   const option = selectedOption();
   if (!grid || !option || !state.info) return;
   const spot = state.info.currentPrice;
   const cols = grid.columns.length;
+  hideHeatmapTooltip();
   els.heatmap.style.gridTemplateColumns = `minmax(48px, 14%) repeat(${cols}, minmax(0, 1fr))`;
   els.heatmap.style.gridTemplateRows = `auto repeat(${grid.rows.length}, minmax(0, 1fr))`;
 
@@ -1293,10 +1340,11 @@ function renderHeatmap() {
       const text = state.display === "pct" ? Calc.formatPct(cell.pct) : Calc.formatMultiple(cell.multiple);
       const classes = [
         "cell",
+        "has-tip",
         price === grid.spotRow ? "spot" : "",
         price === grid.strikeRow ? "strike" : "",
       ].join(" ");
-      return `<div class="${classes}" style="background:${Calc.heatColor(cell.multiple, cell.pct)}">${text}</div>`;
+      return `<div class="${classes}" data-tip="${escapeAttr(heatmapTip(cell))}" style="background:${Calc.heatColor(cell.multiple, cell.pct)}">${text}</div>`;
     });
     return [header, ...cells];
   });
@@ -1737,13 +1785,33 @@ els.compareEditors.addEventListener("change", (event) => {
   if (field === "expiry") setCompare(index, { expiry: event.target.value });
 });
 
-els.chainTable.addEventListener("click", (event) => {
+document.addEventListener("click", (event) => {
   const help = event.target.closest("button[data-help]");
-  if (help) {
-    event.stopPropagation();
-    openHelp(help.dataset.help);
-    return;
-  }
+  if (!help) return;
+  event.preventDefault();
+  openHelp(help.dataset.help);
+});
+
+els.heatmap.addEventListener("pointerover", (event) => {
+  const cell = event.target.closest(".cell.has-tip");
+  if (cell && els.heatmap.contains(cell)) showHeatmapTooltip(cell);
+});
+
+els.heatmap.addEventListener("pointerout", (event) => {
+  const cell = event.target.closest(".cell.has-tip");
+  if (!cell) return;
+  const next = event.relatedTarget;
+  if (next instanceof Node && cell.contains(next)) return;
+  hideHeatmapTooltip();
+});
+
+els.heatmap.addEventListener("pointerdown", (event) => {
+  const cell = event.target.closest(".cell.has-tip");
+  if (cell && els.heatmap.contains(cell)) showHeatmapTooltip(cell);
+});
+
+els.chainTable.addEventListener("click", (event) => {
+  if (event.target.closest("button[data-help]")) return;
   const row = event.target.closest("tr[data-strike]");
   if (!row) return;
   selectStrike(Number(row.dataset.strike));
