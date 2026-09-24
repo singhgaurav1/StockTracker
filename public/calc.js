@@ -337,7 +337,7 @@ export function buildHeatmap({
 
 export function leverageVsStock(optionPct, stockPct) {
   if (!Number.isFinite(optionPct) || !Number.isFinite(stockPct)) return null;
-  if (Math.abs(stockPct) < 1e-8) return null;
+  if (Math.abs(stockPct) < 0.5) return null;
   return optionPct / stockPct;
 }
 
@@ -364,7 +364,7 @@ export function heatmapLeverageTooltip({ multiple, pct, stockPct }) {
   const optionText = formatPct(pct);
   const stockText = formatPct(stockPct);
   if (multiple == null) {
-    if (Number.isFinite(stockPct) && Math.abs(stockPct) < 1e-8) {
+    if (Number.isFinite(stockPct) && Math.abs(stockPct) < 0.5) {
       return `Leverage versus holding the stock is undefined here because the stock is unchanged from today. The option’s return is ${optionText}.`;
     }
     return "Not enough data to compare this option with holding the stock.";

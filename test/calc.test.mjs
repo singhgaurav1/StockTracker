@@ -50,6 +50,8 @@ test("leverage versus stock is option return over stock return", () => {
   assert.equal(Calc.leverageVsStock(-100, -10), 10);
   assert.equal(Calc.leverageVsStock(150, -10), -15);
   assert.equal(Calc.leverageVsStock(20, 0), null);
+  assert.equal(Calc.leverageVsStock(80, 0.4), null);
+  assert.equal(Calc.leverageVsStock(80, 0.5), 160);
   assert.equal(Calc.leverageVsStock(null, 10), null);
 });
 
