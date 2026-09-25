@@ -1,47 +1,15 @@
-const RATE = 0.05;
-const YEAR_MS = 365.25 * 24 * 3600 * 1000;
+import { clamp, daysBetween, addDays, todayISO } from "./format.ts";
+import {
+  greeks,
+  optionPremium,
+  optionValue,
+  roundTo,
+  sanitizeIv,
+  yearsBetween,
+} from "./pricing.ts";
+import type { OptionRight } from "./types.ts";
 
-export function todayISO(now = new Date()) {
-  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 10);
-}
-
-export function addDays(isoDate, days) {
-  const utc = Date.parse(`${isoDate.slice(0, 10)}T00:00:00Z`);
-  return new Date(utc + days * 86400000).toISOString().slice(0, 10);
-}
-
-export function daysBetween(from, to) {
-  const a = Date.parse(`${from.slice(0, 10)}T00:00:00Z`);
-  const b = Date.parse(`${to.slice(0, 10)}T00:00:00Z`);
-  return Math.round((b - a) / 86400000);
-}
-
-export function yearsBetween(from, to) {
-  const a = Date.parse(`${from.slice(0, 10)}T00:00:00Z`);
-  const b = Date.parse(`${to.slice(0, 10)}T00:00:00Z`);
-  return (b - a) / YEAR_MS;
-}
-
-export function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value));
-}
-
-export function optionPremium(option) {
-  if (!option) return 0;
-  if (option.bid > 0 && option.ask > 0) return (option.bid + option.ask) / 2;
-  if (option.lastPrice > 0) return option.lastPrice;
-  if (option.ask > 0) return option.ask;
-  if (option.bid > 0) return option.bid;
-  return 0;
-}
-
-export function sanitizeIv(iv) {
-  if (!Number.isFinite(iv) || iv < 1 || iv > 250) return null;
-  return iv;
-}
-
-export function nearestIndex(values, target) {
+export function nearestIndex(values: number[], target: number): number {
   let best = 0;
   let bestDiff = Infinity;
   values.forEach((value, index) => {
@@ -54,12 +22,18 @@ export function nearestIndex(values, target) {
   return best;
 }
 
-export function defaultStrikeWindow(spot, strikes, ivPct, years, selectedStrike) {
+export function defaultStrikeWindow(
+  spot: number,
+  strikes: number[],
+  ivPct: number,
+  years: number,
+  selectedStrike: number,
+) {
   const iv = Math.max(sanitizeIv(ivPct) ?? 20, 10) / 100;
   const tenor = Math.max(years, 2 / 365.25);
   const oneSigmaPct = iv * Math.sqrt(tenor) * 100;
   const halfWindow = clamp(oneSigmaPct * 1.75, 15, 55);
-  const unique = [...new Set((strikes ?? []).filter((s) => s > 0))].sort((a, b) => a - b);
+  const unique = [...new Set((strikes ?? []).filter((strike) => strike > 0))].sort((a, b) => a - b);
   const chainMin = unique[0] ?? spot * (1 - halfWindow / 100);
   const chainMax = unique[unique.length - 1] ?? spot * (1 + halfWindow / 100);
   let minStrike = spot * (1 - halfWindow / 100);
@@ -85,18 +59,16 @@ export function tableCapacity(width = 390, height = 800) {
   return { maxCols, maxRows };
 }
 
-function dateGranularity(dte) {
-  if (dte <= 21) return { step: 7, kind: "weekly" };
-  if (dte <= 60) return { step: 14, kind: "biweekly" };
-  return { step: 30, kind: "monthly" };
+function dateGranularity(dte: number) {
+  if (dte <= 21) return { step: 7, kind: "weekly" as const };
+  if (dte <= 60) return { step: 14, kind: "biweekly" as const };
+  return { step: 30, kind: "monthly" as const };
 }
 
-export function buildDateColumns(today, expiry, maxCols = 6) {
+export function buildDateColumns(today: string, expiry: string, maxCols = 6) {
   const dte = Math.max(0, daysBetween(today, expiry));
   const { step, kind } = dateGranularity(dte);
-  if (dte <= 0) {
-    return { dates: [expiry], kind, step };
-  }
+  if (dte <= 0) return { dates: [expiry], kind, step };
 
   const dates = [today];
   let cursor = addDays(today, step);
@@ -106,9 +78,7 @@ export function buildDateColumns(today, expiry, maxCols = 6) {
   }
   if (dates[dates.length - 1] !== expiry) dates.push(expiry);
 
-  if (dates.length <= maxCols) {
-    return { dates, kind, step };
-  }
+  if (dates.length <= maxCols) return { dates, kind, step };
 
   const inner = dates.slice(1, -1);
   const keep = Math.max(1, maxCols - 2);
@@ -117,21 +87,17 @@ export function buildDateColumns(today, expiry, maxCols = 6) {
     const idx = keep === 1 ? Math.floor((inner.length - 1) / 2) : Math.round((i * (inner.length - 1)) / (keep - 1));
     sampled.push(inner[idx]);
   }
-  const unique = [...new Set([dates[0], ...sampled, dates[dates.length - 1]])];
-  return { dates: unique, kind, step };
+  return { dates: [...new Set([dates[0], ...sampled, dates[dates.length - 1]])], kind, step };
 }
 
-export function formatDateLabel(isoDate, today, expiry) {
-  if (isoDate === today) return "Now";
-  if (isoDate === expiry) return "Exp";
-  const date = new Date(`${isoDate}T00:00:00Z`);
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
-}
-
-export function interpolateIv(term, date, today = todayISO()) {
+export function interpolateIv(
+  term: Array<{ date: string; iv?: number | null; atmIv?: number | null }> | null | undefined,
+  date: string,
+  today = todayISO(),
+): number | null {
   const points = (term ?? [])
-    .map((row) => ({ date: row.date, iv: sanitizeIv(row.iv ?? row.atmIv) }))
-    .filter((row) => row.iv != null)
+    .map((row) => ({ date: row.date, iv: sanitizeIv(row.iv ?? row.atmIv ?? NaN) }))
+    .filter((row): row is { date: string; iv: number } => row.iv != null)
     .sort((a, b) => a.date.localeCompare(b.date));
   if (!points.length) return null;
   if (date <= points[0].date) return points[0].iv;
@@ -148,7 +114,7 @@ export function interpolateIv(term, date, today = todayISO()) {
     }
   }
   if (right.date === left.date) return left.iv;
-  const tOf = (iso) => Math.max(yearsBetween(today, iso), 1 / 365.25);
+  const tOf = (iso: string) => Math.max(yearsBetween(today, iso), 1 / 365.25);
   const tLeft = tOf(left.date);
   const tRight = tOf(right.date);
   const t = tOf(date);
@@ -160,53 +126,31 @@ export function interpolateIv(term, date, today = todayISO()) {
   return Math.sqrt(Math.max(variance, 0) / t) * 100;
 }
 
-export function remainingSigma(term, optionIvPct, today, scenarioDate, expiryDate) {
+export function remainingSigma(
+  term: Array<{ date: string; iv?: number | null; atmIv?: number | null }>,
+  optionIvPct: number,
+  today: string,
+  scenarioDate: string,
+  expiryDate: string,
+): number {
   const optionIv = (sanitizeIv(optionIvPct) ?? 25) / 100;
   const tau = yearsBetween(scenarioDate, expiryDate);
   if (tau <= 0.5 / 365.25) return optionIv;
 
-  const T = Math.max(yearsBetween(today, expiryDate), 1 / 365.25);
-  const t = Math.max(yearsBetween(today, scenarioDate), 0);
-  if (t <= 0.5 / 365.25) return optionIv;
+  const total = Math.max(yearsBetween(today, expiryDate), 1 / 365.25);
+  const elapsed = Math.max(yearsBetween(today, scenarioDate), 0);
+  if (elapsed <= 0.5 / 365.25) return optionIv;
 
-  const wExpiry = optionIv * optionIv * T;
+  const wExpiry = optionIv * optionIv * total;
   const ivToScenario = interpolateIv(term, scenarioDate, today);
   if (ivToScenario == null) return optionIv;
-  const wElapsed = (ivToScenario / 100) ** 2 * t;
+  const wElapsed = (ivToScenario / 100) ** 2 * elapsed;
   const forwardVar = (wExpiry - wElapsed) / tau;
   if (forwardVar <= 0.0025) return optionIv;
   return Math.sqrt(forwardVar);
 }
 
-function erf(x) {
-  const sign = x < 0 ? -1 : 1;
-  const abs = Math.abs(x);
-  const t = 1 / (1 + 0.3275911 * abs);
-  const y = 1 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-abs * abs);
-  return sign * y;
-}
-
-function normCdf(x) {
-  return 0.5 * (1 + erf(x / Math.SQRT2));
-}
-
-export function blackScholes(spot, strike, years, rate, sigma, isCall) {
-  if (years <= 0) return Math.max(isCall ? spot - strike : strike - spot, 0);
-  if (sigma <= 0) return Math.max(isCall ? spot - strike : strike - spot, 0);
-  const d1 = (Math.log(spot / strike) + (rate + (sigma ** 2) / 2) * years) / (sigma * Math.sqrt(years));
-  const d2 = d1 - sigma * Math.sqrt(years);
-  if (isCall) return spot * normCdf(d1) - strike * Math.exp(-rate * years) * normCdf(d2);
-  return strike * Math.exp(-rate * years) * normCdf(-d2) - spot * normCdf(-d1);
-}
-
-export function optionValue(spot, strike, yearsRemaining, sigma, isCall) {
-  if (yearsRemaining <= 0.5 / 365.25) {
-    return Math.max(isCall ? spot - strike : strike - spot, 0);
-  }
-  return blackScholes(spot, strike, yearsRemaining, RATE, sigma, isCall);
-}
-
-export function typicalStep(strikes) {
+export function typicalStep(strikes: number[]): number {
   const diffs = [];
   for (let i = 1; i < strikes.length; i += 1) {
     const diff = roundTo(strikes[i] - strikes[i - 1], 4);
@@ -217,12 +161,7 @@ export function typicalStep(strikes) {
   return diffs[Math.floor(diffs.length / 2)] || 1;
 }
 
-function roundTo(value, digits = 2) {
-  const factor = 10 ** digits;
-  return Math.round(value * factor) / factor;
-}
-
-function niceStep(raw) {
+function niceStep(raw: number): number {
   if (raw <= 0.25) return 0.5;
   if (raw <= 0.75) return 1;
   if (raw <= 2) return 1;
@@ -233,7 +172,21 @@ function niceStep(raw) {
   return 50;
 }
 
-export function buildPriceRows({ spot, strikes, strikeMin, strikeMax, maxRows, selectedStrike }) {
+export function buildPriceRows({
+  spot,
+  strikes,
+  strikeMin,
+  strikeMax,
+  maxRows,
+  selectedStrike,
+}: {
+  spot: number;
+  strikes: number[];
+  strikeMin: number;
+  strikeMax: number;
+  maxRows: number;
+  selectedStrike: number;
+}): number[] {
   const lo = Math.min(strikeMin, strikeMax);
   const hi = Math.max(strikeMin, strikeMax);
   const unique = [...new Set((strikes ?? []).filter((strike) => Number.isFinite(strike) && strike > 0))].sort((a, b) => a - b);
@@ -258,12 +211,14 @@ export function buildPriceRows({ spot, strikes, strikeMin, strikeMax, maxRows, s
 
   levels.sort((a, b) => a - b);
   if (levels.length > maxRows) {
-    const keep = new Set(extras.filter((v) => v >= lo && v <= hi));
+    const keep = new Set(extras.filter((value) => value >= lo && value <= hi));
     const remainingSlots = Math.max(3, maxRows - keep.size);
     const others = levels.filter((price) => !keep.has(price));
     const picked = [];
     for (let i = 0; i < remainingSlots && others.length; i += 1) {
-      const idx = remainingSlots === 1 ? Math.floor((others.length - 1) / 2) : Math.round((i * (others.length - 1)) / (remainingSlots - 1));
+      const idx = remainingSlots === 1
+        ? Math.floor((others.length - 1) / 2)
+        : Math.round((i * (others.length - 1)) / (remainingSlots - 1));
       picked.push(others[idx]);
     }
     levels = [...new Set([...picked, ...keep])].sort((a, b) => a - b);
@@ -272,7 +227,13 @@ export function buildPriceRows({ spot, strikes, strikeMin, strikeMax, maxRows, s
   return levels.sort((a, b) => b - a);
 }
 
-export function columnIvPct(term, optionIvPct, today, scenarioDate, expiryDate) {
+export function columnIvPct(
+  term: Array<{ date: string; iv?: number | null; atmIv?: number | null }>,
+  optionIvPct: number,
+  today: string,
+  scenarioDate: string,
+  expiryDate: string,
+): number | null {
   const tau = yearsBetween(scenarioDate, expiryDate);
   if (tau <= 0.5 / 365.25) return sanitizeIv(optionIvPct);
   const sigma = remainingSigma(term, optionIvPct, today, scenarioDate, expiryDate);
@@ -291,27 +252,30 @@ export function buildHeatmap({
   maxRows,
   maxCols,
   strikes,
+}: {
+  spot: number;
+  option: { strike: number; bid?: number; ask?: number; lastPrice?: number; impliedVolatility: number };
+  isCall: boolean;
+  expiry: string;
+  today: string;
+  term: Array<{ date: string; iv?: number | null; atmIv?: number | null }>;
+  strikeMin: number;
+  strikeMax: number;
+  maxRows: number;
+  maxCols: number;
+  strikes: number[];
 }) {
   const premium = optionPremium(option);
   const strike = option.strike;
   const optionIv = sanitizeIv(option.impliedVolatility) ?? interpolateIv(term, expiry) ?? 25;
   const { dates, kind } = buildDateColumns(today, expiry, maxCols);
-  const rows = buildPriceRows({
-    spot,
-    strikes,
-    strikeMin,
-    strikeMax,
-    maxRows,
-    selectedStrike: strike,
-  });
-
+  const rows = buildPriceRows({ spot, strikes, strikeMin, strikeMax, maxRows, selectedStrike: strike });
   const columns = dates.map((date) => {
     const remaining = Math.max(yearsBetween(date, expiry), 0);
     const ivPct = columnIvPct(term, optionIv, today, date, expiry);
     const sigma = (ivPct ?? optionIv) / 100;
     return { date, remaining, ivPct, sigma };
   });
-
   const cells = rows.map((price) =>
     columns.map((column) => {
       const value = optionValue(price, strike, column.remaining, column.sigma, isCall);
@@ -320,7 +284,6 @@ export function buildHeatmap({
       return { value, multiple, pct };
     }),
   );
-
   return {
     premium,
     optionIv,
@@ -334,56 +297,7 @@ export function buildHeatmap({
   };
 }
 
-export function formatPct(value) {
-  if (value == null || !Number.isFinite(value)) return "—";
-  if (value <= -99.5) return "−100%";
-  const rounded = Math.abs(value) >= 100 ? value.toFixed(0) : value.toFixed(0);
-  if (value > 0) return `+${rounded}%`;
-  if (value < 0) return `−${Math.abs(Number(rounded))}%`;
-  return "0%";
-}
-
-export function formatMultiple(value) {
-  if (value == null || !Number.isFinite(value) || value < 0) return "—";
-  if (value >= 100) return "99x+";
-  if (value >= 10) return `${value.toFixed(0)}x`;
-  if (value >= 1) return `${value.toFixed(1)}x`;
-  return `${value.toFixed(2)}x`;
-}
-
-export function heatColor(multiple, pct) {
-  const score = multiple != null ? multiple - 1 : pct != null ? pct / 100 : 0;
-  const intensity = clamp(Math.abs(score) / (multiple != null ? 1.5 : 2), 0, 1);
-  if (score > 0.02) return `rgba(61, 220, 145, ${0.18 + intensity * 0.72})`;
-  if (score < -0.02) return `rgba(255, 107, 107, ${0.18 + intensity * 0.72})`;
-  return "rgba(232, 238, 246, 0.08)";
-}
-
-function normPdf(x) {
-  return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
-}
-
-export function greeks(spot, strike, years, sigma, isCall) {
-  const empty = { delta: null, gamma: null, theta: null, vega: null };
-  if (!(spot > 0) || !(strike > 0) || !(sigma > 0) || !(years > 0)) return empty;
-  const t = Math.max(years, 1 / 365.25);
-  const sqrtT = Math.sqrt(t);
-  const d1 = (Math.log(spot / strike) + (RATE + (sigma ** 2) / 2) * t) / (sigma * sqrtT);
-  const d2 = d1 - sigma * sqrtT;
-  const pdf = normPdf(d1);
-  const discount = Math.exp(-RATE * t);
-  const delta = isCall ? normCdf(d1) : normCdf(d1) - 1;
-  const gamma = pdf / (spot * sigma * sqrtT);
-  let thetaAnnual = -(spot * pdf * sigma) / (2 * sqrtT);
-  if (isCall) thetaAnnual -= RATE * strike * discount * normCdf(d2);
-  else thetaAnnual += RATE * strike * discount * normCdf(-d2);
-  const theta = thetaAnnual / 365.25;
-  const vega = (spot * pdf * sqrtT) / 100;
-  if (![delta, gamma, theta, vega].every(Number.isFinite)) return empty;
-  return { delta, gamma, theta, vega };
-}
-
-export function suggestedTarget(spot, isCall) {
+export function suggestedTarget(spot: number, isCall: boolean): number {
   if (!(spot > 0)) return 0;
   const step = spot >= 200 ? 10 : spot >= 50 ? 5 : spot >= 20 ? 1 : 0.5;
   const raw = spot * (isCall ? 1.1 : 0.9);
@@ -393,9 +307,9 @@ export function suggestedTarget(spot, isCall) {
   return roundTo(target, 2);
 }
 
-export function neighborStrikes(strikes, selected) {
+export function neighborStrikes(strikes: number[] | null | undefined, selected: number | null): number[] {
   const sorted = [...new Set((strikes ?? []).filter((strike) => strike > 0))].sort((a, b) => a - b);
-  const index = sorted.indexOf(selected);
+  const index = sorted.indexOf(selected ?? NaN);
   if (index < 0) return [];
   const picks = [];
   for (const offset of [1, -1, 2, -2, 3, -3]) {
@@ -406,7 +320,23 @@ export function neighborStrikes(strikes, selected) {
   return picks;
 }
 
-export function contractSnapshot({ spot, target, strike, premium, ivPct, years, isCall }) {
+export function contractSnapshot({
+  spot,
+  target,
+  strike,
+  premium,
+  ivPct,
+  years,
+  isCall,
+}: {
+  spot: number;
+  target: number;
+  strike: number;
+  premium: number;
+  ivPct: number;
+  years: number;
+  isCall: boolean;
+}) {
   const safePremium = premium > 0 ? premium : 0;
   const value = Math.max(isCall ? target - strike : strike - target, 0);
   const pnlPerShare = value - safePremium;
@@ -426,7 +356,21 @@ export function contractSnapshot({ spot, target, strike, premium, ivPct, years, 
   };
 }
 
-export function payoffCurve({ strike, premium, isCall, minPrice, maxPrice, steps = 80 }) {
+export function payoffCurve({
+  strike,
+  premium,
+  isCall,
+  minPrice,
+  maxPrice,
+  steps = 80,
+}: {
+  strike: number;
+  premium: number;
+  isCall: boolean;
+  minPrice: number;
+  maxPrice: number;
+  steps?: number;
+}) {
   const safePremium = premium > 0 ? premium : 0;
   const count = Math.max(2, steps);
   const span = maxPrice - minPrice;
@@ -439,7 +383,7 @@ export function payoffCurve({ strike, premium, isCall, minPrice, maxPrice, steps
   return points;
 }
 
-export function payoffDomain(spot, target, strikes) {
+export function payoffDomain(spot: number, target: number, strikes: number[]) {
   const anchors = [spot * 0.8, spot * 1.2, target, ...(strikes ?? [])].filter((price) => price > 0 && Number.isFinite(price));
   const minAnchor = Math.min(...anchors);
   const maxAnchor = Math.max(...anchors);
@@ -450,28 +394,37 @@ export function payoffDomain(spot, target, strikes) {
   };
 }
 
-export function compactNumber(value) {
-  const n = Number(value) || 0;
-  if (Math.abs(n) >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
-  if (Math.abs(n) >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
-  if (Math.abs(n) >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
-  return n.toLocaleString();
+export function chipStrikes(strikes: number[], spot: number, selectedStrike: number | null): number[] {
+  let band = strikes.filter((strike) => strike >= spot * 0.75 && strike <= spot * 1.25);
+  if (band.length < 7) band = strikes;
+  if (selectedStrike != null && !band.includes(selectedStrike)) {
+    band = [...band, selectedStrike].sort((a, b) => a - b);
+  }
+  return band;
 }
 
-export function barWidthPct(value, max, minVisible = 4) {
-  const n = Number(value) || 0;
-  const cap = Number(max) || 0;
-  if (n <= 0 || cap <= 0) return 0;
-  return Math.max(minVisible, Math.min(100, (n / cap) * 100));
-}
+export type MaterializedSlot = {
+  auto: boolean;
+  hidden: boolean;
+  empty?: boolean;
+  strike?: number;
+  right?: OptionRight;
+  expiry?: string;
+};
 
-export function maxMetric(rows, key) {
-  return (rows ?? []).reduce((max, row) => Math.max(max, Number(row?.[key]) || 0), 0);
-}
-
-export function money(value, digits = 2) {
-  return `$${Number(value).toLocaleString(undefined, {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  })}`;
+export function materializeCompareSlot(
+  stored: MaterializedSlot | undefined,
+  index: number,
+  chainStrikes: number[],
+  selectedStrike: number | null,
+  selectedExpiry: string,
+  right: OptionRight,
+): MaterializedSlot {
+  const slot = stored ?? { auto: true, hidden: false };
+  if (slot.hidden) return { ...slot, hidden: true };
+  if (slot.auto === false && slot.strike != null && slot.expiry && slot.right) return slot;
+  const neighbors = neighborStrikes(chainStrikes, selectedStrike);
+  const strike = neighbors[index];
+  if (strike == null) return { auto: true, hidden: true, empty: true };
+  return { strike, right, expiry: selectedExpiry, auto: true, hidden: false };
 }

@@ -1,648 +1,31 @@
-// shared/src/errors.ts
-var ApiError = class extends Error {
-  status;
-  constructor(message, status = 400) {
-    super(message);
-    this.name = "ApiError";
-    this.status = status;
-  }
-};
-function errorMessage(error) {
-  return error instanceof Error ? error.message : "Unknown error";
-}
+import * as Calc from "../shared/src/index.ts";
 
-// shared/src/ticker.ts
-var TICKER = /^[A-Z][A-Z0-9.\-]{0,9}$/;
-function normalizeTicker(raw) {
-  const ticker = raw.trim().toUpperCase();
-  if (!TICKER.test(ticker)) {
-    throw new ApiError("Please check the ticker symbol and try again.");
-  }
-  return ticker;
-}
+const client = Calc.createStockClient();
 
-// shared/src/pricing.ts
-var RISK_FREE_RATE = 0.05;
-var IV_MIN_PCT = 5;
-var IV_MAX_PCT = 250;
-var YEAR_MS = 365.25 * 24 * 3600 * 1e3;
-function roundTo(value, digits = 2) {
-  const factor = 10 ** digits;
-  return Math.round(value * factor) / factor;
-}
-function erf(x) {
-  const sign = x < 0 ? -1 : 1;
-  const abs = Math.abs(x);
-  const t = 1 / (1 + 0.3275911 * abs);
-  const y = 1 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-abs * abs);
-  return sign * y;
-}
-function normCdf(x) {
-  return 0.5 * (1 + erf(x / Math.SQRT2));
-}
-function normPdf(x) {
-  return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
-}
-function blackScholes(spot, strike, years, rate, sigma, isCall) {
-  if (years <= 0) return Math.max(isCall ? spot - strike : strike - spot, 0);
-  if (sigma <= 0) return Math.max(isCall ? spot - strike : strike - spot, 0);
-  const d1 = (Math.log(spot / strike) + (rate + sigma ** 2 / 2) * years) / (sigma * Math.sqrt(years));
-  const d2 = d1 - sigma * Math.sqrt(years);
-  if (isCall) return spot * normCdf(d1) - strike * Math.exp(-rate * years) * normCdf(d2);
-  return strike * Math.exp(-rate * years) * normCdf(-d2) - spot * normCdf(-d1);
-}
-function yearsBetween(from, to) {
-  const a = Date.parse(`${from.slice(0, 10)}T00:00:00Z`);
-  const b = Date.parse(`${to.slice(0, 10)}T00:00:00Z`);
-  return (b - a) / YEAR_MS;
-}
-function yearsToExpiry(date, now = Date.now()) {
-  const expiry = Date.parse(`${date.slice(0, 10)}T20:00:00Z`);
-  if (!Number.isFinite(expiry)) return 1 / 365.25;
-  return Math.max((expiry - now) / YEAR_MS, 1 / (365.25 * 24));
-}
-function quotedPremium(bid, ask, lastPrice) {
-  if (bid > 0 && ask > 0) return (bid + ask) / 2;
-  if (lastPrice > 0) return lastPrice;
-  if (ask > 0) return ask;
-  if (bid > 0) return bid;
-  return 0;
-}
-function optionPremium(option) {
-  if (!option) return 0;
-  return quotedPremium(Number(option.bid) || 0, Number(option.ask) || 0, Number(option.lastPrice) || 0);
-}
-function usableIv(percent) {
-  if (!Number.isFinite(percent) || percent < IV_MIN_PCT || percent > IV_MAX_PCT) return null;
-  return percent;
-}
-function sanitizeIv(iv) {
-  return usableIv(iv);
-}
-function optionValue(spot, strike, yearsRemaining, sigma, isCall) {
-  if (yearsRemaining <= 0.5 / 365.25) {
-    return Math.max(isCall ? spot - strike : strike - spot, 0);
-  }
-  return blackScholes(spot, strike, yearsRemaining, RISK_FREE_RATE, sigma, isCall);
-}
-function greeks(spot, strike, years, sigma, isCall) {
-  const empty = { delta: null, gamma: null, theta: null, vega: null };
-  if (!(spot > 0) || !(strike > 0) || !(sigma > 0) || !(years > 0)) return empty;
-  const t = Math.max(years, 1 / 365.25);
-  const sqrtT = Math.sqrt(t);
-  const d1 = (Math.log(spot / strike) + (RISK_FREE_RATE + sigma ** 2 / 2) * t) / (sigma * sqrtT);
-  const d2 = d1 - sigma * sqrtT;
-  const pdf = normPdf(d1);
-  const discount = Math.exp(-RISK_FREE_RATE * t);
-  const delta = isCall ? normCdf(d1) : normCdf(d1) - 1;
-  const gamma = pdf / (spot * sigma * sqrtT);
-  let thetaAnnual = -(spot * pdf * sigma) / (2 * sqrtT);
-  if (isCall) thetaAnnual -= RISK_FREE_RATE * strike * discount * normCdf(d2);
-  else thetaAnnual += RISK_FREE_RATE * strike * discount * normCdf(-d2);
-  const theta = thetaAnnual / 365.25;
-  const vega = spot * pdf * sqrtT / 100;
-  if (![delta, gamma, theta, vega].every(Number.isFinite)) return empty;
-  return { delta, gamma, theta, vega };
-}
+const POPULAR = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "GOOGL", "META", "SPY", "QQQ", "IWM"];
+const LEG_COLORS = ["#5b8cff", "#f0c35b", "#d28bff"];
+const MOVES = [-20, -10, -5, 5, 10, 20];
 
-// shared/src/format.ts
-function todayISO(now = /* @__PURE__ */ new Date()) {
-  const local = new Date(now.getTime() - now.getTimezoneOffset() * 6e4);
-  return local.toISOString().slice(0, 10);
-}
-function addDays(isoDate, days) {
-  const utc = Date.parse(`${isoDate.slice(0, 10)}T00:00:00Z`);
-  return new Date(utc + days * 864e5).toISOString().slice(0, 10);
-}
-function daysBetween(from, to) {
-  const a = Date.parse(`${from.slice(0, 10)}T00:00:00Z`);
-  const b = Date.parse(`${to.slice(0, 10)}T00:00:00Z`);
-  return Math.round((b - a) / 864e5);
-}
-function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value));
-}
-function formatDateLabel(isoDate, today, expiry) {
-  const day = isoDate.slice(0, 10);
-  if (day === today.slice(0, 10)) return "Now";
-  if (day === expiry.slice(0, 10)) return "Exp";
-  const date = /* @__PURE__ */ new Date(`${day}T00:00:00Z`);
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
-}
-function formatChartDate(isoDate) {
-  const day = isoDate.slice(0, 10);
-  return (/* @__PURE__ */ new Date(`${day}T00:00:00Z`)).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    timeZone: "UTC"
-  });
-}
-function formatPct(value) {
-  if (value == null || !Number.isFinite(value)) return "\u2014";
-  if (value <= -99.5) return "\u2212100%";
-  const rounded = Number(value).toFixed(0);
-  if (value > 0) return `+${rounded}%`;
-  if (value < 0) return `\u2212${Math.abs(Number(rounded))}%`;
-  return "0%";
-}
-function formatMultiple(value) {
-  if (value == null || !Number.isFinite(value) || value < 0) return "\u2014";
-  if (value >= 100) return "99x+";
-  if (value >= 10) return `${value.toFixed(0)}x`;
-  if (value >= 1) return `${value.toFixed(1)}x`;
-  return `${value.toFixed(2)}x`;
-}
-function heatColor(multiple, pct) {
-  const score = multiple != null ? multiple - 1 : pct != null ? pct / 100 : 0;
-  const intensity = clamp(Math.abs(score) / (multiple != null ? 1.5 : 2), 0, 1);
-  if (score > 0.02) return `rgba(61, 220, 145, ${0.18 + intensity * 0.72})`;
-  if (score < -0.02) return `rgba(255, 107, 107, ${0.18 + intensity * 0.72})`;
-  return "rgba(232, 238, 246, 0.08)";
-}
-function compactNumber(value) {
-  const n = Number(value) || 0;
-  if (Math.abs(n) >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
-  if (Math.abs(n) >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
-  if (Math.abs(n) >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
-  return n.toLocaleString();
-}
-function money(value, digits = 2) {
-  return `$${Number(value).toLocaleString(void 0, {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits
-  })}`;
-}
-function barWidthPct(value, max, minVisible = 4) {
-  const n = Number(value) || 0;
-  const cap = Number(max) || 0;
-  if (n <= 0 || cap <= 0) return 0;
-  return Math.max(minVisible, Math.min(100, n / cap * 100));
-}
-function maxMetric(rows, key) {
-  return (rows ?? []).reduce((max, row) => Math.max(max, Number(row?.[key]) || 0), 0);
-}
-function pickDefaultExpiry(dates, today = todayISO()) {
-  const ranked = dates.map((date) => ({ date, dte: daysBetween(today, date) }));
-  return ranked.find((row) => row.dte >= 14)?.date ?? ranked.find((row) => row.dte >= 7)?.date ?? dates[0] ?? "";
-}
-function priceStep(spot) {
-  if (spot >= 100) return 1;
-  if (spot >= 20) return 0.5;
-  return 0.05;
-}
-function snapPrice(price, step) {
-  const snapped = Math.round(price / step) * step;
-  return roundTo2(snapped, 2);
-}
-function roundTo2(value, digits = 2) {
-  const factor = 10 ** digits;
-  return Math.round(value * factor) / factor;
-}
-function filterHistory(history2, period, now = Date.now()) {
-  const days = { "1m": 31, "3m": 93, "6m": 186, "1y": 400 }[period] ?? 93;
-  const cutoff = now - days * 864e5;
-  return history2.filter((bar) => Date.parse(bar.date) >= cutoff);
-}
-
-// shared/src/scenarios.ts
-function nearestIndex(values, target) {
-  let best = 0;
-  let bestDiff = Infinity;
-  values.forEach((value, index) => {
-    const diff = Math.abs(value - target);
-    if (diff < bestDiff) {
-      best = index;
-      bestDiff = diff;
-    }
-  });
-  return best;
-}
-function defaultStrikeWindow(spot, strikes, ivPct, years, selectedStrike) {
-  const iv = Math.max(sanitizeIv(ivPct) ?? 20, 10) / 100;
-  const tenor = Math.max(years, 2 / 365.25);
-  const oneSigmaPct = iv * Math.sqrt(tenor) * 100;
-  const halfWindow = clamp(oneSigmaPct * 1.75, 15, 55);
-  const unique = [...new Set((strikes ?? []).filter((strike) => strike > 0))].sort((a, b) => a - b);
-  const chainMin = unique[0] ?? spot * (1 - halfWindow / 100);
-  const chainMax = unique[unique.length - 1] ?? spot * (1 + halfWindow / 100);
-  let minStrike = spot * (1 - halfWindow / 100);
-  let maxStrike = spot * (1 + halfWindow / 100);
-  if (selectedStrike) {
-    minStrike = Math.min(minStrike, selectedStrike * 0.92);
-    maxStrike = Math.max(maxStrike, selectedStrike * 1.08);
-  }
-  minStrike = clamp(minStrike, chainMin, chainMax);
-  maxStrike = clamp(maxStrike, chainMin, chainMax);
-  if (minStrike > maxStrike) [minStrike, maxStrike] = [maxStrike, minStrike];
-  return {
-    minStrike: roundTo(minStrike, 2),
-    maxStrike: roundTo(maxStrike, 2),
-    chainMin: roundTo(chainMin, 2),
-    chainMax: roundTo(chainMax, 2)
-  };
-}
-function tableCapacity(width = 390, height = 800) {
-  const maxCols = width < 380 ? 8 : width < 700 ? 9 : 11;
-  const maxRows = height < 680 ? 10 : height < 900 ? 12 : 14;
-  return { maxCols, maxRows };
-}
-function dateGranularity(dte) {
-  if (dte <= 21) return { step: 7, kind: "weekly" };
-  if (dte <= 60) return { step: 14, kind: "biweekly" };
-  return { step: 30, kind: "monthly" };
-}
-function buildDateColumns(today, expiry, maxCols = 6) {
-  const dte = Math.max(0, daysBetween(today, expiry));
-  const { step, kind } = dateGranularity(dte);
-  if (dte <= 0) return { dates: [expiry], kind, step };
-  const dates = [today];
-  let cursor = addDays(today, step);
-  while (daysBetween(cursor, expiry) > 2 && dates.length < 24) {
-    dates.push(cursor);
-    cursor = addDays(cursor, step);
-  }
-  if (dates[dates.length - 1] !== expiry) dates.push(expiry);
-  if (dates.length <= maxCols) return { dates, kind, step };
-  const inner = dates.slice(1, -1);
-  const keep = Math.max(1, maxCols - 2);
-  const sampled = [];
-  for (let i = 0; i < keep; i += 1) {
-    const idx = keep === 1 ? Math.floor((inner.length - 1) / 2) : Math.round(i * (inner.length - 1) / (keep - 1));
-    sampled.push(inner[idx]);
-  }
-  return { dates: [.../* @__PURE__ */ new Set([dates[0], ...sampled, dates[dates.length - 1]])], kind, step };
-}
-function interpolateIv(term, date, today = todayISO()) {
-  const points = (term ?? []).map((row) => ({ date: row.date, iv: sanitizeIv(row.iv ?? row.atmIv ?? NaN) })).filter((row) => row.iv != null).sort((a, b) => a.date.localeCompare(b.date));
-  if (!points.length) return null;
-  if (date <= points[0].date) return points[0].iv;
-  const last = points[points.length - 1];
-  if (date >= last.date) return last.iv;
-  let left = points[0];
-  let right = last;
-  for (let i = 0; i < points.length - 1; i += 1) {
-    if (date >= points[i].date && date <= points[i + 1].date) {
-      left = points[i];
-      right = points[i + 1];
-      break;
-    }
-  }
-  if (right.date === left.date) return left.iv;
-  const tOf = (iso) => Math.max(yearsBetween(today, iso), 1 / 365.25);
-  const tLeft = tOf(left.date);
-  const tRight = tOf(right.date);
-  const t = tOf(date);
-  const wLeft = (left.iv / 100) ** 2 * tLeft;
-  const wRight = (right.iv / 100) ** 2 * tRight;
-  const span = tRight - tLeft || 1 / 365.25;
-  const weight = (t - tLeft) / span;
-  const variance = wLeft * (1 - weight) + wRight * weight;
-  return Math.sqrt(Math.max(variance, 0) / t) * 100;
-}
-function remainingSigma(term, optionIvPct, today, scenarioDate, expiryDate) {
-  const optionIv = (sanitizeIv(optionIvPct) ?? 25) / 100;
-  const tau = yearsBetween(scenarioDate, expiryDate);
-  if (tau <= 0.5 / 365.25) return optionIv;
-  const total = Math.max(yearsBetween(today, expiryDate), 1 / 365.25);
-  const elapsed = Math.max(yearsBetween(today, scenarioDate), 0);
-  if (elapsed <= 0.5 / 365.25) return optionIv;
-  const wExpiry = optionIv * optionIv * total;
-  const ivToScenario = interpolateIv(term, scenarioDate, today);
-  if (ivToScenario == null) return optionIv;
-  const wElapsed = (ivToScenario / 100) ** 2 * elapsed;
-  const forwardVar = (wExpiry - wElapsed) / tau;
-  if (forwardVar <= 25e-4) return optionIv;
-  return Math.sqrt(forwardVar);
-}
-function typicalStep(strikes) {
-  const diffs = [];
-  for (let i = 1; i < strikes.length; i += 1) {
-    const diff = roundTo(strikes[i] - strikes[i - 1], 4);
-    if (diff > 0) diffs.push(diff);
-  }
-  if (!diffs.length) return 1;
-  diffs.sort((a, b) => a - b);
-  return diffs[Math.floor(diffs.length / 2)] || 1;
-}
-function niceStep(raw) {
-  if (raw <= 0.25) return 0.5;
-  if (raw <= 0.75) return 1;
-  if (raw <= 2) return 1;
-  if (raw <= 3.5) return 2.5;
-  if (raw <= 7) return 5;
-  if (raw <= 15) return 10;
-  if (raw <= 35) return 25;
-  return 50;
-}
-function buildPriceRows({
-  spot,
-  strikes,
-  strikeMin,
-  strikeMax,
-  maxRows,
-  selectedStrike
-}) {
-  const lo = Math.min(strikeMin, strikeMax);
-  const hi = Math.max(strikeMin, strikeMax);
-  const unique = [...new Set((strikes ?? []).filter((strike) => Number.isFinite(strike) && strike > 0))].sort((a, b) => a - b);
-  const step = typicalStep(unique);
-  let levels = unique.filter((strike) => strike >= lo && strike <= hi);
-  const extras = [selectedStrike, unique[nearestIndex(unique, spot)]].filter((value) => Number.isFinite(value) && value > 0);
-  for (const extra of extras) {
-    if (extra >= lo && extra <= hi && !levels.includes(extra)) levels.push(extra);
-  }
-  if (levels.length < 5) {
-    const synthetic = [];
-    const usedStep = step || niceStep((hi - lo) / Math.max(maxRows - 1, 1));
-    const start = Math.max(usedStep, Math.floor(lo / usedStep) * usedStep);
-    for (let price = start; price <= hi + usedStep / 4; price = roundTo(price + usedStep, 4)) {
-      if (price > 0) synthetic.push(roundTo(price, 2));
-    }
-    levels = [.../* @__PURE__ */ new Set([...levels, ...synthetic])].sort((a, b) => a - b);
-    levels = levels.filter((price) => price >= lo * 0.98 && price <= hi * 1.02);
-  }
-  levels.sort((a, b) => a - b);
-  if (levels.length > maxRows) {
-    const keep = new Set(extras.filter((value) => value >= lo && value <= hi));
-    const remainingSlots = Math.max(3, maxRows - keep.size);
-    const others = levels.filter((price) => !keep.has(price));
-    const picked = [];
-    for (let i = 0; i < remainingSlots && others.length; i += 1) {
-      const idx = remainingSlots === 1 ? Math.floor((others.length - 1) / 2) : Math.round(i * (others.length - 1) / (remainingSlots - 1));
-      picked.push(others[idx]);
-    }
-    levels = [.../* @__PURE__ */ new Set([...picked, ...keep])].sort((a, b) => a - b);
-  }
-  return levels.sort((a, b) => b - a);
-}
-function columnIvPct(term, optionIvPct, today, scenarioDate, expiryDate) {
-  const tau = yearsBetween(scenarioDate, expiryDate);
-  if (tau <= 0.5 / 365.25) return sanitizeIv(optionIvPct);
-  const sigma = remainingSigma(term, optionIvPct, today, scenarioDate, expiryDate);
-  return roundTo(sigma * 100, 1);
-}
-function buildHeatmap({
-  spot,
-  option,
-  isCall,
-  expiry,
-  today,
-  term,
-  strikeMin,
-  strikeMax,
-  maxRows,
-  maxCols,
-  strikes
-}) {
-  const premium = optionPremium(option);
-  const strike = option.strike;
-  const optionIv = sanitizeIv(option.impliedVolatility) ?? interpolateIv(term, expiry) ?? 25;
-  const { dates, kind } = buildDateColumns(today, expiry, maxCols);
-  const rows = buildPriceRows({ spot, strikes, strikeMin, strikeMax, maxRows, selectedStrike: strike });
-  const columns = dates.map((date) => {
-    const remaining = Math.max(yearsBetween(date, expiry), 0);
-    const ivPct = columnIvPct(term, optionIv, today, date, expiry);
-    const sigma = (ivPct ?? optionIv) / 100;
-    return { date, remaining, ivPct, sigma };
-  });
-  const cells = rows.map(
-    (price) => columns.map((column) => {
-      const value = optionValue(price, strike, column.remaining, column.sigma, isCall);
-      const multiple = premium > 0 ? value / premium : null;
-      const pct = premium > 0 ? (value - premium) / premium * 100 : null;
-      return { value, multiple, pct };
-    })
-  );
-  return {
-    premium,
-    optionIv,
-    kind,
-    dates,
-    columns,
-    rows,
-    cells,
-    spotRow: rows[nearestIndex(rows, spot)],
-    strikeRow: rows.includes(strike) ? strike : null
-  };
-}
-function suggestedTarget(spot, isCall) {
-  if (!(spot > 0)) return 0;
-  const step = spot >= 200 ? 10 : spot >= 50 ? 5 : spot >= 20 ? 1 : 0.5;
-  const raw = spot * (isCall ? 1.1 : 0.9);
-  let target = Math.round(raw / step) * step;
-  if (isCall && target <= spot) target += step;
-  if (!isCall && target >= spot) target = Math.max(step, target - step);
-  return roundTo(target, 2);
-}
-function neighborStrikes(strikes, selected) {
-  const sorted = [...new Set((strikes ?? []).filter((strike) => strike > 0))].sort((a, b) => a - b);
-  const index = sorted.indexOf(selected ?? NaN);
-  if (index < 0) return [];
-  const picks = [];
-  for (const offset of [1, -1, 2, -2, 3, -3]) {
-    const strike = sorted[index + offset];
-    if (strike != null) picks.push(strike);
-    if (picks.length === 2) break;
-  }
-  return picks;
-}
-function contractSnapshot({
-  spot,
-  target,
-  strike,
-  premium,
-  ivPct,
-  years,
-  isCall
-}) {
-  const safePremium = premium > 0 ? premium : 0;
-  const value = Math.max(isCall ? target - strike : strike - target, 0);
-  const pnlPerShare = value - safePremium;
-  const greek = greeks(spot, strike, years, ivPct > 0 ? ivPct / 100 : 0, isCall);
-  return {
-    value,
-    pnlPerShare,
-    pnlPerContract: pnlPerShare * 100,
-    maxLossPerContract: safePremium * 100,
-    returnPct: safePremium > 0 ? pnlPerShare / safePremium * 100 : null,
-    multiple: safePremium > 0 ? value / safePremium : null,
-    breakeven: isCall ? strike + safePremium : strike - safePremium,
-    delta: greek.delta,
-    gamma: greek.gamma,
-    theta: greek.theta,
-    vega: greek.vega
-  };
-}
-function payoffCurve({
-  strike,
-  premium,
-  isCall,
-  minPrice,
-  maxPrice,
-  steps = 80
-}) {
-  const safePremium = premium > 0 ? premium : 0;
-  const count = Math.max(2, steps);
-  const span = maxPrice - minPrice;
-  const points = [];
-  for (let i = 0; i <= count; i += 1) {
-    const price = minPrice + span * i / count;
-    const value = Math.max(isCall ? price - strike : strike - price, 0);
-    points.push({ price, value, pnl: value - safePremium });
-  }
-  return points;
-}
-function payoffDomain(spot, target, strikes) {
-  const anchors = [spot * 0.8, spot * 1.2, target, ...strikes ?? []].filter((price) => price > 0 && Number.isFinite(price));
-  const minAnchor = Math.min(...anchors);
-  const maxAnchor = Math.max(...anchors);
-  const pad = Math.max((maxAnchor - minAnchor) * 0.08, (spot > 0 ? spot : 1) * 0.02);
-  return {
-    minPrice: Math.max(0.01, minAnchor - pad),
-    maxPrice: maxAnchor + pad
-  };
-}
-function materializeCompareSlot(stored, index, chainStrikes2, selectedStrike, selectedExpiry, right) {
-  const slot = stored ?? { auto: true, hidden: false };
-  if (slot.hidden) return { ...slot, hidden: true };
-  if (slot.auto === false && slot.strike != null && slot.expiry && slot.right) return slot;
-  const neighbors = neighborStrikes(chainStrikes2, selectedStrike);
-  const strike = neighbors[index];
-  if (strike == null) return { auto: true, hidden: true, empty: true };
-  return { strike, right, expiry: selectedExpiry, auto: true, hidden: false };
-}
-
-// shared/src/share.ts
-var PERIODS = /* @__PURE__ */ new Set(["1m", "3m", "6m", "1y"]);
-function encodeSlot(slot) {
-  if (!slot) return "";
-  if (slot.hidden) return "off";
-  if (slot.auto !== false) return "";
-  return `${slot.strike},${slot.right},${slot.expiry}`;
-}
-function parseSlot(raw) {
-  if (!raw) return { auto: true, hidden: false };
-  if (raw === "off") return { auto: false, hidden: true };
-  const [strikeRaw, rightRaw, expiry] = raw.split(",");
-  const strike = Number(strikeRaw);
-  const right = rightRaw === "put" ? "put" : "call";
-  if (!Number.isFinite(strike) || !/^\d{4}-\d{2}-\d{2}$/.test(expiry || "")) {
-    return { auto: true, hidden: false };
-  }
-  return { auto: false, hidden: false, strike, right, expiry };
-}
-function buildShareParams(state2) {
-  const params = new URLSearchParams();
-  if (!state2.ticker) return params;
-  params.set("symbol", state2.ticker);
-  if (state2.selectedExpiry) params.set("expiry", state2.selectedExpiry);
-  if (state2.right) params.set("type", state2.right);
-  if (state2.selectedStrike != null) params.set("strike", String(state2.selectedStrike));
-  if (state2.targetPrice != null) params.set("target", String(state2.targetPrice));
-  const encodedB = encodeSlot(state2.compare[0]);
-  const encodedC = encodeSlot(state2.compare[1]);
-  if (encodedB) params.set("b", encodedB);
-  if (encodedC) params.set("c", encodedC);
-  if (state2.period !== "3m") params.set("period", state2.period);
-  if (state2.chart !== "price") params.set("chart", state2.chart);
-  if (state2.strikeMin != null) params.set("min", String(state2.strikeMin));
-  if (state2.strikeMax != null) params.set("max", String(state2.strikeMax));
-  if (state2.display !== "multiple") params.set("mode", state2.display);
-  return params;
-}
-function readShareParams(params) {
-  const symbol = (params.get("symbol") || params.get("ticker") || "").trim().toUpperCase();
-  const type = params.get("type");
-  const right = type === "put" ? "put" : type === "call" ? "call" : void 0;
-  const strike = params.get("strike") ? Number(params.get("strike")) : null;
-  const target = params.get("target") ? Number(params.get("target")) : null;
-  const period = params.get("period") ?? void 0;
-  const chart = params.get("chart");
-  const mode = params.get("mode");
-  return {
-    symbol,
-    expiry: params.get("expiry") || void 0,
-    right,
-    strike: Number.isFinite(strike) ? strike : null,
-    target: Number.isFinite(target) ? target : null,
-    period: period && PERIODS.has(period) ? period : void 0,
-    chart: chart === "iv" || chart === "price" ? chart : void 0,
-    display: mode === "pct" || mode === "multiple" ? mode : void 0,
-    compare: params.has("b") || params.has("c") ? [parseSlot(params.get("b")), parseSlot(params.get("c"))] : null,
-    strikeMin: params.get("min") ? Number(params.get("min")) : null,
-    strikeMax: params.get("max") ? Number(params.get("max")) : null
-  };
-}
-
-// shared/src/client.ts
-async function readJson(response) {
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new ApiError(data.error || "Request failed", response.status);
-  return data;
-}
-function createStockClient(options = {}) {
-  const baseUrl = (options.baseUrl ?? "").replace(/\/$/, "");
-  const doFetch = options.fetch ?? fetch;
-  async function get(path) {
-    let response;
-    try {
-      response = await doFetch(`${baseUrl}${path}`);
-    } catch (error) {
-      throw new ApiError(errorMessage(error) || "Request failed", 502);
-    }
-    return readJson(response);
-  }
-  return {
-    async stock(ticker) {
-      return get(`/api/stock?ticker=${encodeURIComponent(normalizeTicker(ticker))}`);
-    },
-    async expirations(ticker) {
-      return get(`/api/options?ticker=${encodeURIComponent(normalizeTicker(ticker))}`);
-    },
-    async chain(ticker, date) {
-      const symbol = normalizeTicker(ticker);
-      return get(
-        `/api/options?ticker=${encodeURIComponent(symbol)}&date=${encodeURIComponent(date)}`
-      );
-    },
-    async ivTerm({ ticker, expiry, strike, right }) {
-      const symbol = normalizeTicker(ticker);
-      const side = right === "put" ? "put" : "call";
-      const query = new URLSearchParams({
-        ticker: symbol,
-        expiry,
-        strike: String(strike),
-        right: side
-      });
-      return get(`/api/iv-term?${query.toString()}`);
-    }
-  };
-}
-
-// web/app.js
-var client = createStockClient();
-var POPULAR = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "GOOGL", "META", "SPY", "QQQ", "IWM"];
-var LEG_COLORS = ["#5b8cff", "#f0c35b", "#d28bff"];
-var MOVES = [-20, -10, -5, 5, 10, 20];
-var CHAIN_COLUMNS = [
+const CHAIN_COLUMNS = [
   { id: "last", label: "Last" },
   { id: "oi", label: "Open interest", helpKey: "oi" },
   { id: "volume", label: "Volume", helpKey: "volume" },
   { id: "bidAsk", label: "Bid / Ask" },
-  { id: "iv", label: "IV" }
+  { id: "iv", label: "IV" },
 ];
-var HELP_COPY = {
+
+const HELP_COPY = {
   volume: {
     title: "Volume",
-    body: "The number of contracts traded today for this strike. Higher volume usually means more liquidity and tighter pricing."
+    body: "The number of contracts traded today for this strike. Higher volume usually means more liquidity and tighter pricing.",
   },
   oi: {
     title: "Open interest",
-    body: "The number of outstanding contracts that have not been closed. Rising open interest can mean new positions are being opened at that strike."
-  }
+    body: "The number of outstanding contracts that have not been closed. Rising open interest can mean new positions are being opened at that strike.",
+  },
 };
-var els = {
+
+const els = {
   pick: document.getElementById("view-pick"),
   analyzer: document.getElementById("view-analyzer"),
   form: document.getElementById("ticker-form"),
@@ -699,9 +82,10 @@ var els = {
   helpModal: document.getElementById("help-modal"),
   helpTitle: document.getElementById("help-title"),
   helpBody: document.getElementById("help-body"),
-  helpClose: document.getElementById("help-close")
+  helpClose: document.getElementById("help-close"),
 };
-var state = {
+
+const state = {
   ticker: "",
   info: null,
   history: [],
@@ -737,22 +121,27 @@ var state = {
   pendingMin: null,
   pendingMax: null,
   payoffMap: null,
-  urlTimer: 0
+  urlTimer: 0,
 };
-var lastChipStrike = null;
-var CHART_PLOT_HEIGHT = () => window.innerWidth < 720 ? 160 : 200;
-var Y_AXIS_WIDTH = 42;
+
+let lastChipStrike = null;
+const CHART_PLOT_HEIGHT = () => (window.innerWidth < 720 ? 160 : 200);
+const Y_AXIS_WIDTH = 42;
+
 function urlParams() {
   return new URLSearchParams(location.search);
 }
+
 function defaultCompare() {
   return [{ auto: true, hidden: false }, { auto: true, hidden: false }];
 }
+
 function buildShareUrl() {
   if (!state.ticker) return location.pathname;
-  const qs = buildShareParams(state).toString();
+  const qs = Calc.buildShareParams(state).toString();
   return qs ? `${location.pathname}?${qs}` : location.pathname;
 }
+
 function syncUrl({ push = true, replace = false } = {}) {
   if (state.restoring) return;
   const url = state.view === "pick" && !state.ticker ? location.pathname : buildShareUrl();
@@ -760,19 +149,24 @@ function syncUrl({ push = true, replace = false } = {}) {
   if (replace || !push) history.replaceState(snapshot, "", url);
   else history.pushState(snapshot, "", url);
 }
+
 function queueUrl() {
   if (state.restoring) return;
   clearTimeout(state.urlTimer);
   state.urlTimer = setTimeout(() => syncUrl({ replace: true }), 120);
 }
+
 function showView(name, { push = true } = {}) {
   state.view = name;
   els.pick.hidden = name !== "pick";
   els.analyzer.hidden = name !== "analyzer";
   document.body.dataset.view = name;
-  document.title = name === "analyzer" && state.info ? `${state.info.symbol} \xB7 Options Scenario Analyzer` : "Options Scenario Analyzer";
+  document.title = name === "analyzer" && state.info
+    ? `${state.info.symbol} · Options Scenario Analyzer`
+    : "Options Scenario Analyzer";
   if (push) syncUrl({ push: true });
 }
+
 function goBack() {
   if (state.view !== "analyzer") return;
   if (history.length > 1) {
@@ -783,12 +177,15 @@ function goBack() {
   showView("pick", { push: false });
   history.replaceState({ view: "pick" }, "", location.pathname);
 }
+
 window.addEventListener("popstate", () => {
   restoreFromUrl();
 });
+
 async function restoreFromUrl() {
-  const share = readShareParams(urlParams());
+  const share = Calc.readShareParams(urlParams());
   const symbol = share.symbol;
+
   if (!symbol) {
     state.restoring = true;
     showView("pick", { push: false });
@@ -796,7 +193,9 @@ async function restoreFromUrl() {
     history.replaceState({ view: "pick" }, "", location.pathname);
     return;
   }
+
   const { expiry, right, strike, target, period, chart, display: mode, compare } = share;
+
   if (period) {
     state.period = period;
     [...els.periods.querySelectorAll("button")].forEach((node) => {
@@ -816,6 +215,7 @@ async function restoreFromUrl() {
   }
   state.pendingMin = share.strikeMin;
   state.pendingMax = share.strikeMax;
+
   state.restoring = true;
   try {
     await loadTicker(symbol, {
@@ -824,7 +224,7 @@ async function restoreFromUrl() {
       strike,
       target: Number.isFinite(target) ? target : null,
       compare,
-      pushUrl: false
+      pushUrl: false,
     });
   } catch {
     showView("pick", { push: false });
@@ -833,144 +233,175 @@ async function restoreFromUrl() {
     syncUrl({ replace: true });
   }
 }
+
 function toast(message) {
   els.status.hidden = !message;
   els.status.textContent = message || "";
 }
+
 function setBanner(el, message) {
   el.hidden = !message;
   el.textContent = message || "";
 }
-function pickDefaultExpiry2(dates) {
-  return pickDefaultExpiry(dates, todayISO());
+
+function pickDefaultExpiry(dates) {
+  return Calc.pickDefaultExpiry(dates, Calc.todayISO());
 }
+
 function quotePair(bid, ask) {
-  if (!(bid > 0) && !(ask > 0)) return "\u2014";
-  return `${money(bid)} / ${money(ask)}`;
+  if (!(bid > 0) && !(ask > 0)) return "—";
+  return `${Calc.money(bid)} / ${Calc.money(ask)}`;
 }
+
 function currentOptions() {
   return state.right === "put" ? state.puts : state.calls;
 }
+
 function selectedOption() {
   return currentOptions().find((row) => row.strike === state.selectedStrike) ?? null;
 }
+
 function chainStrikes() {
   return currentOptions().map((row) => row.strike);
 }
+
 function changeClass(value) {
   if (value > 0) return "up";
   if (value < 0) return "down";
   return "";
 }
+
 function formatPrice(value) {
   const n = Number(value);
-  if (!Number.isFinite(n)) return "\u2014";
-  const digits = Math.abs(n - Math.round(n)) < 1e-3 ? 0 : 2;
-  return money(n, digits);
+  if (!Number.isFinite(n)) return "—";
+  const digits = Math.abs(n - Math.round(n)) < 0.001 ? 0 : 2;
+  return Calc.money(n, digits);
 }
+
 function formatSignedMoney(value, digits = 2) {
-  if (!Number.isFinite(value)) return "\u2014";
-  const abs = money(Math.abs(value), digits);
-  if (value > 1e-7) return `+${abs}`;
-  if (value < -1e-7) return `\u2212${abs}`;
-  return money(0, digits);
+  if (!Number.isFinite(value)) return "—";
+  const abs = Calc.money(Math.abs(value), digits);
+  if (value > 0.0000001) return `+${abs}`;
+  if (value < -0.0000001) return `−${abs}`;
+  return Calc.money(0, digits);
 }
+
 function contractDigits(value) {
   return Math.abs(value) >= 100 ? 0 : 2;
 }
+
 function formatSignedContract(value) {
   return formatSignedMoney(value, contractDigits(value));
 }
+
 function formatUnsignedContract(value) {
-  if (!Number.isFinite(value)) return "\u2014";
-  return money(Math.abs(value), contractDigits(value));
+  if (!Number.isFinite(value)) return "—";
+  return Calc.money(Math.abs(value), contractDigits(value));
 }
+
 function formatDelta(value) {
-  if (value == null || !Number.isFinite(value)) return "\u2014";
+  if (value == null || !Number.isFinite(value)) return "—";
   return value.toFixed(2);
 }
+
 function formatTheta(value) {
-  if (value == null || !Number.isFinite(value)) return "\u2014";
+  if (value == null || !Number.isFinite(value)) return "—";
   const digits = Math.abs(value) >= 0.1 ? 2 : 3;
   return `${formatSignedMoney(value, digits)}/d`;
 }
+
 function formatVega(value) {
-  if (value == null || !Number.isFinite(value)) return "\u2014";
-  return money(value, 2);
+  if (value == null || !Number.isFinite(value)) return "—";
+  return Calc.money(value, 2);
 }
-function priceStep2(spot) {
-  return priceStep(spot);
+
+function priceStep(spot) {
+  return Calc.priceStep(spot);
 }
-function snapPrice2(price, step) {
-  return snapPrice(price, step);
+
+function snapPrice(price, step) {
+  return Calc.snapPrice(price, step);
 }
+
 function targetBounds() {
   const spot = state.info?.currentPrice || 1;
-  const step = priceStep2(spot);
-  let min = Math.max(step, snapPrice2(spot * 0.5, step));
-  let max = snapPrice2(spot * 1.5, step);
+  const step = priceStep(spot);
+  let min = Math.max(step, snapPrice(spot * 0.5, step));
+  let max = snapPrice(spot * 1.5, step);
   if (state.targetPrice != null) {
     min = Math.min(min, state.targetPrice);
     max = Math.max(max, state.targetPrice);
   }
   return { min, max };
 }
+
 function formatMove(target, spot) {
-  const pct = (target - spot) / spot * 100;
-  const sign = pct > 0 ? "+" : pct < 0 ? "\u2212" : "";
+  const pct = ((target - spot) / spot) * 100;
+  const sign = pct > 0 ? "+" : pct < 0 ? "−" : "";
   return `${sign}${Math.abs(pct).toFixed(1)}% from ${formatPrice(spot)}`;
 }
+
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
     "&": "&amp;",
     "<": "&lt;",
     ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;"
-  })[ch]);
+    "\"": "&quot;",
+    "'": "&#39;",
+  }[ch]));
 }
+
 function targetPhrase(symbol, target, spot) {
   const price = `<b>${formatPrice(target)}</b>`;
   const name = escapeHtml(symbol);
-  const pct = (target - spot) / spot * 100;
+  const pct = ((target - spot) / spot) * 100;
   if (Math.abs(pct) < 0.25) return `If ${name} stays near ${price} through expiry`;
   if (target > spot) return `If ${name} goes to ${price} by expiry`;
   return `If ${name} falls to ${price} by expiry`;
 }
+
 function renderChips() {
   els.chips.innerHTML = POPULAR.map(
-    (ticker) => `<button type="button" data-ticker="${ticker}">${ticker}</button>`
+    (ticker) => `<button type="button" data-ticker="${ticker}">${ticker}</button>`,
   ).join("");
 }
-function filterHistory2() {
-  return filterHistory(state.history, state.period);
+
+function filterHistory() {
+  return Calc.filterHistory(state.history, state.period);
 }
+
 function latestHv() {
   return [...state.history].reverse().find((bar) => bar.historicalVolatility != null)?.historicalVolatility ?? null;
 }
+
 function currentAtmIv() {
   return state.right === "put" ? state.atmPutIv : state.atmCallIv;
 }
+
 function chartHeight() {
   return CHART_PLOT_HEIGHT();
 }
-function formatChartDate2(isoDate) {
-  return formatChartDate(isoDate);
+
+function formatChartDate(isoDate) {
+  return Calc.formatChartDate(isoDate);
 }
+
 function renderChart() {
   if (state.chart === "iv") renderIvChart();
   else renderPriceChart();
 }
+
 function renderInteractiveChart({
   points,
   color,
   formatValue,
   emptyText = "Not enough data yet.",
-  extras = []
+  extras = [],
 }) {
   const height = chartHeight();
   const plotWidth = Math.max((els.chart.clientWidth || 320) - Y_AXIS_WIDTH - 4, 180);
   els.chartCaption.textContent = "";
+
   if (points.length < 2) {
     els.chart.innerHTML = `
       <div class="chart-yaxis" aria-hidden="true"></div>
@@ -978,6 +409,7 @@ function renderInteractiveChart({
     `;
     return;
   }
+
   const values = points.map((point) => point.value);
   const min = Math.min(...values);
   const max = Math.max(...values);
@@ -985,18 +417,20 @@ function renderInteractiveChart({
   const lo = formatValue === formatIvValue ? Math.max(0, min - pad) : min - pad;
   const hi = max + pad;
   const span = hi - lo || 1;
-  const yOf = (value) => height - 8 - (value - lo) / span * (height - 16);
+  const yOf = (value) => height - 8 - ((value - lo) / span) * (height - 16);
   const coords = points.map((point, index) => {
-    const x = index / (points.length - 1) * plotWidth;
+    const x = (index / (points.length - 1)) * plotWidth;
     return { x, y: yOf(point.value), point };
   });
   const line = `M${coords.map((coord) => `${coord.x.toFixed(1)},${coord.y.toFixed(1)}`).join(" L")}`;
   const area = `${line} L${plotWidth},${height} L0,${height} Z`;
   const yLabels = [hi, (hi + lo) / 2, lo].map((value) => formatValue(value));
+
   const extraSvg = extras.map((extra) => `
     <line x1="0" x2="${plotWidth}" y1="${yOf(extra.value).toFixed(1)}" y2="${yOf(extra.value).toFixed(1)}"
       stroke="${extra.color}" stroke-width="1.5" stroke-dasharray="5 4" vector-effect="non-scaling-stroke" />
   `).join("");
+
   els.chart.innerHTML = `
     <div class="chart-yaxis" aria-hidden="true">
       <span>${yLabels[0]}</span>
@@ -1020,19 +454,24 @@ function renderInteractiveChart({
       <div class="chart-tooltip" hidden></div>
     </div>
   `;
+
   bindChartInteraction(els.chart.querySelector(".chart-plot"), coords, formatValue);
 }
+
 function formatPriceValue(value) {
   return value >= 100 ? `$${value.toFixed(0)}` : `$${value.toFixed(2)}`;
 }
+
 function formatIvValue(value) {
   return `${value.toFixed(1)}%`;
 }
+
 function bindChartInteraction(plot, coords, formatValue) {
   const crosshair = plot.querySelector(".chart-crosshair");
   const dot = plot.querySelector(".chart-dot");
   const tooltip = plot.querySelector(".chart-tooltip");
   const lineColor = plot.querySelector("path[stroke]")?.getAttribute("stroke") || "#5b8cff";
+
   const showAt = (clientX) => {
     const rect = plot.getBoundingClientRect();
     const x = Math.max(0, Math.min(clientX - rect.left, rect.width));
@@ -1040,25 +479,27 @@ function bindChartInteraction(plot, coords, formatValue) {
     const index = Math.round(ratio * (coords.length - 1));
     const coord = coords[index];
     if (!coord) return;
-    const leftPct = coord.x / (coords[coords.length - 1].x || 1) * 100;
+    const leftPct = (coord.x / (coords[coords.length - 1].x || 1)) * 100;
     crosshair.hidden = false;
     crosshair.style.left = `${leftPct}%`;
     dot.hidden = false;
     dot.style.left = `${leftPct}%`;
-    dot.style.top = `${coord.y / chartHeight() * 100}%`;
+    dot.style.top = `${(coord.y / chartHeight()) * 100}%`;
     dot.style.background = lineColor;
     tooltip.hidden = false;
-    tooltip.innerHTML = `<strong>${formatChartDate2(coord.point.date)}</strong>${formatValue(coord.point.value)}`;
+    tooltip.innerHTML = `<strong>${formatChartDate(coord.point.date)}</strong>${formatValue(coord.point.value)}`;
     const flip = leftPct > 72;
     tooltip.style.left = flip ? "auto" : "50%";
     tooltip.style.right = flip ? "0" : "auto";
     tooltip.style.transform = flip ? "none" : "translateX(-50%)";
   };
+
   const hide = () => {
     crosshair.hidden = true;
     dot.hidden = true;
     tooltip.hidden = true;
   };
+
   plot.addEventListener("pointerdown", (event) => {
     plot.setPointerCapture(event.pointerId);
     showAt(event.clientX);
@@ -1076,54 +517,59 @@ function bindChartInteraction(plot, coords, formatValue) {
     if (!plot.querySelector(":active")) hide();
   });
 }
+
 function renderPriceChart() {
-  const bars = filterHistory2();
+  const bars = filterHistory();
   const up = (state.info?.currentPrice ?? 0) >= (state.info?.previousClose ?? 0);
   const color = up ? "#3ddc91" : "#ff6b6b";
   renderInteractiveChart({
     points: bars.map((bar) => ({ date: bar.date, value: bar.close })),
     color,
     formatValue: formatPriceValue,
-    emptyText: "Not enough price history yet."
+    emptyText: "Not enough price history yet.",
   });
 }
+
 function renderIvChart() {
-  const bars = filterHistory2().filter((bar) => bar.historicalVolatility != null);
+  const bars = filterHistory().filter((bar) => bar.historicalVolatility != null);
   const atmIv = currentAtmIv();
   const hvNow = bars.length ? bars[bars.length - 1].historicalVolatility : null;
   els.chartCaption.textContent = [
     hvNow != null ? `HV ${hvNow.toFixed(1)}%` : null,
-    atmIv != null ? `ATM IV ${atmIv.toFixed(1)}%` : null
-  ].filter(Boolean).join(" \xB7 ");
+    atmIv != null ? `ATM IV ${atmIv.toFixed(1)}%` : null,
+  ].filter(Boolean).join(" · ");
   const extras = atmIv != null ? [{ value: atmIv, color: "#f0c35b" }] : [];
   renderInteractiveChart({
     points: bars.map((bar) => ({ date: bar.date, value: bar.historicalVolatility })),
     color: "#b7adff",
     formatValue: formatIvValue,
     emptyText: "Not enough history yet.",
-    extras
+    extras,
   });
 }
+
 function stat(label, value) {
   return `<div><dt>${label}</dt><dd>${value}</dd></div>`;
 }
+
 function renderQuote() {
   const { info } = state;
   if (!info) return;
   const change = info.currentPrice - info.previousClose;
-  const changePct = info.previousClose ? change / info.previousClose * 100 : 0;
-  const pct = `${changePct >= 0 ? "+" : "\u2212"}${Math.abs(changePct).toFixed(2)}%`;
-  const dollars = `${change >= 0 ? "+" : "\u2212"}${money(Math.abs(change))}`;
+  const changePct = info.previousClose ? (change / info.previousClose) * 100 : 0;
+  const pct = `${changePct >= 0 ? "+" : "−"}${Math.abs(changePct).toFixed(2)}%`;
+  const dollars = `${change >= 0 ? "+" : "−"}${Calc.money(Math.abs(change))}`;
   els.tradeSymbol.textContent = info.symbol;
   els.company.textContent = info.longName;
-  els.price.textContent = money(info.currentPrice);
+  els.price.textContent = Calc.money(info.currentPrice);
   els.change.className = `change ${changeClass(change)}`;
   els.change.textContent = `${pct}  ${dollars}`;
   els.switchInput.value = info.symbol;
   els.targetName.textContent = info.symbol;
-  document.title = `${info.symbol} \xB7 Options Scenario Analyzer`;
+  document.title = `${info.symbol} · Options Scenario Analyzer`;
   renderHistoryStats();
 }
+
 function renderHistoryStats() {
   const { info } = state;
   if (!info) return;
@@ -1131,33 +577,39 @@ function renderHistoryStats() {
   const atmIv = currentAtmIv();
   els.historyMeta.textContent = [
     hv != null ? `HV ${hv.toFixed(1)}%` : null,
-    atmIv != null ? `IV ${atmIv.toFixed(1)}%` : null
-  ].filter(Boolean).join(" \xB7 ");
+    atmIv != null ? `IV ${atmIv.toFixed(1)}%` : null,
+  ].filter(Boolean).join(" · ");
   els.stats.innerHTML = [
-    stat("High", money(info.dayHigh)),
-    stat("Low", money(info.dayLow)),
-    stat("Vol", compactNumber(info.volume)),
-    stat("52w", `${money(info.fiftyTwoWeekLow, 0)}\u2013${money(info.fiftyTwoWeekHigh, 0)}`)
+    stat("High", Calc.money(info.dayHigh)),
+    stat("Low", Calc.money(info.dayLow)),
+    stat("Vol", Calc.compactNumber(info.volume)),
+    stat("52w", `${Calc.money(info.fiftyTwoWeekLow, 0)}–${Calc.money(info.fiftyTwoWeekHigh, 0)}`),
   ].join("");
 }
+
 function expiryLabel(date) {
-  const dte = daysBetween(todayISO(), date);
-  const pretty = (/* @__PURE__ */ new Date(`${date}T00:00:00Z`)).toLocaleDateString("en-US", {
+  const dte = Calc.daysBetween(Calc.todayISO(), date);
+  const pretty = new Date(`${date}T00:00:00Z`).toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
     year: "numeric",
-    timeZone: "UTC"
+    timeZone: "UTC",
   });
-  return `${pretty} \xB7 ${dte}d`;
+  return `${pretty} · ${dte}d`;
 }
+
 function renderExpiries() {
-  els.expiry.innerHTML = state.expirations.map((date) => `<option value="${date}" ${date === state.selectedExpiry ? "selected" : ""}>${expiryLabel(date)}</option>`).join("");
+  els.expiry.innerHTML = state.expirations
+    .map((date) => `<option value="${date}" ${date === state.selectedExpiry ? "selected" : ""}>${expiryLabel(date)}</option>`)
+    .join("");
   if (state.selectedExpiry) els.expiry.value = state.selectedExpiry;
 }
+
 function renderType() {
   els.typeCall.classList.toggle("active", state.right === "call");
   els.typePut.classList.toggle("active", state.right === "put");
 }
+
 function chipStrikes(rows) {
   const spot = state.info?.currentPrice ?? 0;
   const strikes = rows.map((row) => row.strike);
@@ -1168,6 +620,7 @@ function chipStrikes(rows) {
   }
   return band;
 }
+
 function renderStrikeChips() {
   const rows = currentOptions();
   const visible = new Set(chipStrikes(rows));
@@ -1175,8 +628,8 @@ function renderStrikeChips() {
   els.strikeScroll.innerHTML = shown.map((row) => {
     const selected = row.strike === state.selectedStrike ? "selected" : "";
     const atm = row.moneyness === "ATM" ? "atm" : "";
-    const premium = optionPremium(row);
-    return `<button type="button" class="strike-chip ${selected} ${atm}" data-strike="${row.strike}" role="option" aria-selected="${selected ? "true" : "false"}"><strong>${formatPrice(row.strike).slice(1)}</strong><small>${premium > 0 ? money(premium) : "\u2014"}</small></button>`;
+    const premium = Calc.optionPremium(row);
+    return `<button type="button" class="strike-chip ${selected} ${atm}" data-strike="${row.strike}" role="option" aria-selected="${selected ? "true" : "false"}"><strong>${formatPrice(row.strike).slice(1)}</strong><small>${premium > 0 ? Calc.money(premium) : "—"}</small></button>`;
   }).join("");
   if (lastChipStrike !== state.selectedStrike) {
     lastChipStrike = state.selectedStrike;
@@ -1187,21 +640,23 @@ function renderStrikeChips() {
     });
   }
 }
+
 function renderMoveChips() {
   if (!state.info || state.targetPrice == null) return;
   const spot = state.info.currentPrice;
-  const step = priceStep2(spot);
+  const step = priceStep(spot);
   els.moveChips.innerHTML = MOVES.map((pct) => {
-    const price = snapPrice2(spot * (1 + pct / 100), step);
+    const price = snapPrice(spot * (1 + pct / 100), step);
     const active = Math.abs(price - state.targetPrice) <= step * 0.51;
-    const label = `${pct > 0 ? "+" : "\u2212"}${Math.abs(pct)}%`;
+    const label = `${pct > 0 ? "+" : "−"}${Math.abs(pct)}%`;
     return `<button type="button" data-move="${pct}" class="${active ? "active" : ""}">${label}</button>`;
   }).join("");
 }
+
 function renderTargetControls() {
   if (!state.info || state.targetPrice == null) return;
   const bounds = targetBounds();
-  const step = priceStep2(state.info.currentPrice);
+  const step = priceStep(state.info.currentPrice);
   els.targetRange.min = String(bounds.min);
   els.targetRange.max = String(bounds.max);
   els.targetRange.step = String(step);
@@ -1210,31 +665,35 @@ function renderTargetControls() {
   els.targetInput.max = String(bounds.max);
   els.targetInput.step = String(step);
   if (document.activeElement !== els.targetInput) els.targetInput.value = String(state.targetPrice);
-  const pct = (state.targetPrice - state.info.currentPrice) / state.info.currentPrice * 100;
+  const pct = ((state.targetPrice - state.info.currentPrice) / state.info.currentPrice) * 100;
   els.targetMove.className = `target-move ${pct > 0.05 ? "up" : pct < -0.05 ? "down" : ""}`;
   els.targetMove.textContent = formatMove(state.targetPrice, state.info.currentPrice);
   renderMoveChips();
 }
+
 function renderScenario() {
   renderType();
   renderExpiries();
   renderStrikeChips();
   renderTargetControls();
 }
+
 function chainFor(expiry) {
   if (expiry === state.selectedExpiry) return { calls: state.calls, puts: state.puts };
   return state.chainCache[expiry] ?? null;
 }
+
 function materializedSlot(index) {
-  return materializeCompareSlot(
+  return Calc.materializeCompareSlot(
     state.compare[index],
     index,
     chainStrikes(),
     state.selectedStrike,
     state.selectedExpiry,
-    state.right
+    state.right,
   );
 }
+
 function primarySpec() {
   return {
     key: "primary",
@@ -1242,12 +701,14 @@ function primarySpec() {
     strike: state.selectedStrike,
     right: state.right,
     expiry: state.selectedExpiry,
-    primary: true
+    primary: true,
   };
 }
+
 function legId(leg) {
   return `${leg.expiry}|${leg.right}|${leg.strike}`;
 }
+
 function activeLegs() {
   const legs = [];
   const primary = primarySpec();
@@ -1264,7 +725,7 @@ function activeLegs() {
       right: slot.right,
       expiry: slot.expiry,
       primary: false,
-      auto: slot.auto
+      auto: slot.auto,
     };
     if (seen.has(legId(leg))) return;
     seen.add(legId(leg));
@@ -1272,32 +733,36 @@ function activeLegs() {
   });
   return legs;
 }
+
 function legName(leg) {
   const side = leg.right === "put" ? "Put" : "Call";
   return `${formatPrice(leg.strike)} ${side}`;
 }
+
 function legSnapshot(leg) {
   const chain = chainFor(leg.expiry);
   if (!chain) return { ...leg, pending: true };
   const rows = leg.right === "put" ? chain.puts : chain.calls;
   const option = rows.find((row) => row.strike === leg.strike);
   if (!option) return { ...leg, missing: true, pending: false };
-  const premium = optionPremium(option);
-  const years = yearsToExpiry(leg.expiry);
-  const stats = contractSnapshot({
+  const premium = Calc.optionPremium(option);
+  const years = Calc.yearsToExpiry(leg.expiry);
+  const stats = Calc.contractSnapshot({
     spot: state.info.currentPrice,
     target: state.targetPrice,
     strike: option.strike,
     premium,
     ivPct: option.impliedVolatility,
     years,
-    isCall: leg.right === "call"
+    isCall: leg.right === "call",
   });
   return { ...leg, option, premium, years, pending: false, missing: false, ...stats };
 }
+
 function fact(label, value) {
   return `<div><dt>${label}</dt><dd>${value}</dd></div>`;
 }
+
 function renderHero() {
   const option = selectedOption();
   if (!state.info || state.targetPrice == null || !option) {
@@ -1311,44 +776,45 @@ function renderHero() {
   }
   const snap = legSnapshot(primarySpec());
   els.heroKicker.innerHTML = targetPhrase(state.info.symbol, state.targetPrice, state.info.currentPrice);
-  els.heroContract.textContent = `${legName(snap)} \xB7 ${expiryLabel(snap.expiry)}`;
+  els.heroContract.textContent = `${legName(snap)} · ${expiryLabel(snap.expiry)}`;
   if (!(snap.premium > 0)) {
     els.heroPnl.className = "hero-pnl";
     els.heroPnl.textContent = "No quoted premium";
     els.heroUnit.textContent = "";
-    els.heroDetail.textContent = "This strike doesn\u2019t have a usable bid or ask yet.";
+    els.heroDetail.textContent = "This strike doesn’t have a usable bid or ask yet.";
     els.heroFacts.innerHTML = "";
     return;
   }
   const up = snap.pnlPerContract > 0.5;
   const down = snap.pnlPerContract < -0.5;
   els.heroPnl.className = `hero-pnl ${up ? "up" : down ? "down" : ""}`;
-  if (Math.abs(snap.pnlPerShare) < 5e-3) {
+  if (Math.abs(snap.pnlPerShare) < 0.005) {
     els.heroPnl.textContent = "$0";
     els.heroUnit.textContent = "per contract";
-    els.heroDetail.textContent = `You break even at expiry \xB7 paid ${formatPrice(snap.premium)}`;
-  } else if (snap.value <= 1e-4) {
+    els.heroDetail.textContent = `You break even at expiry · paid ${formatPrice(snap.premium)}`;
+  } else if (snap.value <= 0.0001) {
     els.heroPnl.textContent = formatSignedContract(snap.pnlPerContract);
     els.heroUnit.textContent = "per contract";
-    els.heroDetail.textContent = `Expires worthless \xB7 paid ${formatPrice(snap.premium)}`;
+    els.heroDetail.textContent = `Expires worthless · paid ${formatPrice(snap.premium)}`;
   } else {
     els.heroPnl.textContent = formatSignedContract(snap.pnlPerContract);
     els.heroUnit.textContent = "per contract";
     const bits = [
       `Worth ${formatPrice(snap.value)}`,
       `paid ${formatPrice(snap.premium)}`,
-      formatPct(snap.returnPct)
+      Calc.formatPct(snap.returnPct),
     ];
-    if (snap.multiple >= 1) bits.push(formatMultiple(snap.multiple));
-    els.heroDetail.textContent = bits.join(" \xB7 ");
+    if (snap.multiple >= 1) bits.push(Calc.formatMultiple(snap.multiple));
+    els.heroDetail.textContent = bits.join(" · ");
   }
   els.heroFacts.innerHTML = [
     fact("Premium", formatPrice(snap.premium)),
     fact("Breakeven", formatPrice(snap.breakeven)),
     fact("Max loss", formatUnsignedContract(snap.maxLossPerContract)),
-    fact("Delta", formatDelta(snap.delta))
+    fact("Delta", formatDelta(snap.delta)),
   ].join("");
 }
+
 function renderPayoff(retry = true) {
   if (!state.info || state.targetPrice == null) return;
   const snaps = activeLegs().map(legSnapshot).filter((snap) => !snap.pending && !snap.missing && snap.strike != null);
@@ -1360,17 +826,17 @@ function renderPayoff(retry = true) {
   }
   const spot = state.info.currentPrice;
   const target = state.targetPrice;
-  const domain = payoffDomain(spot, target, snaps.map((snap) => snap.strike));
+  const domain = Calc.payoffDomain(spot, target, snaps.map((snap) => snap.strike));
   const curves = snaps.map((snap) => ({
     ...snap,
-    points: payoffCurve({
+    points: Calc.payoffCurve({
       strike: snap.strike,
       premium: snap.premium,
       isCall: snap.right === "call",
       minPrice: domain.minPrice,
       maxPrice: domain.maxPrice,
-      steps: 96
-    })
+      steps: 96,
+    }),
   }));
   const pnls = curves.flatMap((curve) => curve.points.map((point) => point.pnl));
   let yMin = Math.min(0, ...pnls);
@@ -1378,6 +844,7 @@ function renderPayoff(retry = true) {
   const yPad = (yMax - yMin) * 0.14 || 1;
   yMin -= yPad;
   yMax += yPad;
+
   const height = els.payoff.clientHeight || 230;
   const plotWidth = Math.max((els.payoff.clientWidth || 320) - 56, 160);
   const padTop = 18;
@@ -1386,8 +853,9 @@ function renderPayoff(retry = true) {
   const ySpan = yMax - yMin || 1;
   const xSpan = domain.maxPrice - domain.minPrice || 1;
   const yOf = (pnl) => padTop + (1 - (pnl - yMin) / ySpan) * innerH;
-  const xOf = (price) => (price - domain.minPrice) / xSpan * plotWidth;
+  const xOf = (price) => ((price - domain.minPrice) / xSpan) * plotWidth;
   state.payoffMap = { domain, plotWidth };
+
   const ordered = [...curves.filter((curve) => !curve.primary), ...curves.filter((curve) => curve.primary)];
   const paths = ordered.map((curve) => {
     const d = curve.points.map((point, index) => {
@@ -1409,15 +877,17 @@ function renderPayoff(retry = true) {
   const yLabels = [
     { value: yMax, y: yOf(yMax) },
     { value: 0, y: zeroY },
-    { value: yMin, y: yOf(yMin) }
+    { value: yMin, y: yOf(yMin) },
   ];
+
   els.payoffLegend.innerHTML = curves.map((curve) => {
-    const ret = curve.premium > 0 && curve.returnPct != null ? formatPct(curve.returnPct) : "\u2014";
+    const ret = curve.premium > 0 && curve.returnPct != null ? Calc.formatPct(curve.returnPct) : "—";
     return `<span class="legend-item"><i style="background:${curve.color}"></i>${legName(curve)} <em>${ret}</em></span>`;
   }).join("");
+
   els.payoff.innerHTML = `
     <div class="chart-yaxis payoff-yaxis" aria-hidden="true">
-      ${yLabels.map((label) => `<span style="top:${label.y / height * 100}%">${formatSignedMoney(label.value, Math.abs(label.value) >= 10 ? 1 : 2)}</span>`).join("")}
+      ${yLabels.map((label) => `<span style="top:${(label.y / height) * 100}%">${formatSignedMoney(label.value, Math.abs(label.value) >= 10 ? 1 : 2)}</span>`).join("")}
     </div>
     <div class="chart-plot">
       <svg viewBox="0 0 ${plotWidth} ${height}" preserveAspectRatio="none" role="img" aria-label="Payoff at expiry">
@@ -1432,16 +902,19 @@ function renderPayoff(retry = true) {
       <div class="payoff-tip" hidden></div>
     </div>
   `;
+
   if (retry && (els.payoff.clientWidth || 0) < 40) requestAnimationFrame(() => renderPayoff(false));
 }
+
 function priceFromClientX(clientX) {
   const plot = els.payoff.querySelector(".chart-plot");
   const map = state.payoffMap;
   if (!plot || !map) return state.targetPrice;
   const rect = plot.getBoundingClientRect();
-  const t = clamp((clientX - rect.left) / (rect.width || 1), 0, 1);
+  const t = Calc.clamp((clientX - rect.left) / (rect.width || 1), 0, 1);
   return map.domain.minPrice + t * (map.domain.maxPrice - map.domain.minPrice);
 }
+
 function updatePayoffTip(price) {
   const tip = els.payoff.querySelector(".payoff-tip");
   const snap = legSnapshot(primarySpec());
@@ -1449,16 +922,17 @@ function updatePayoffTip(price) {
   const value = Math.max(snap.right === "call" ? price - snap.strike : snap.strike - price, 0);
   const pnl = (value - (snap.premium || 0)) * 100;
   tip.hidden = false;
-  tip.textContent = `${formatPrice(price)} \xB7 ${formatSignedContract(pnl)}`;
+  tip.textContent = `${formatPrice(price)} · ${formatSignedContract(pnl)}`;
   const map = state.payoffMap;
   const t = (price - map.domain.minPrice) / (map.domain.maxPrice - map.domain.minPrice || 1);
   tip.style.left = `${Math.min(78, Math.max(12, t * 100))}%`;
 }
+
 function setTarget(price, { touched = true } = {}) {
   if (!state.info || !Number.isFinite(price)) return;
-  const step = priceStep2(state.info.currentPrice);
+  const step = priceStep(state.info.currentPrice);
   const bounds = targetBounds();
-  state.targetPrice = clamp(snapPrice2(price, step), bounds.min, bounds.max);
+  state.targetPrice = Calc.clamp(snapPrice(price, step), bounds.min, bounds.max);
   if (touched) state.targetTouched = true;
   renderTargetControls();
   renderHero();
@@ -1466,12 +940,14 @@ function setTarget(price, { touched = true } = {}) {
   renderCompareNumbers();
   queueUrl();
 }
+
 function strikesFor(expiry, right) {
   const chain = chainFor(expiry);
   if (!chain) return [];
   const rows = right === "put" ? chain.puts : chain.calls;
   return rows.map((row) => row.strike);
 }
+
 function editorHtml(index) {
   const slot = materializedSlot(index);
   const color = LEG_COLORS[index + 1];
@@ -1505,18 +981,22 @@ function editorHtml(index) {
     </div>
   `;
 }
+
 function renderCompareEditors() {
   els.compareEditors.innerHTML = [0, 1].map((index) => editorHtml(index)).join("");
   ensureCompareChains();
 }
+
 function cellHtml(snap, html) {
-  if (!snap || snap.pending) return "\u2026";
-  if (snap.missing || !(snap.premium > 0)) return "\u2014";
+  if (!snap || snap.pending) return "…";
+  if (snap.missing || !(snap.premium > 0)) return "—";
   return html;
 }
+
 function pair(main, sub) {
   return `<span class="pair"><b>${main}</b><small>${sub}</small></span>`;
 }
+
 function renderCompareNumbers() {
   const snaps = activeLegs().map(legSnapshot);
   renderInsight(snaps);
@@ -1535,13 +1015,13 @@ function renderCompareNumbers() {
     ["Breakeven", (snap) => cellHtml(snap, formatPrice(snap.breakeven))],
     ["Max loss", (snap) => cellHtml(snap, formatUnsignedContract(snap.maxLossPerContract))],
     [`Worth at ${targetLabel}`, (snap) => cellHtml(snap, pair(formatPrice(snap.value), formatUnsignedContract(snap.value * 100)))],
-    [`Return at ${targetLabel}`, (snap, index) => cellHtml(snap, pair(formatPct(snap.returnPct), formatSignedContract(snap.pnlPerContract))), "return"],
+    [`Return at ${targetLabel}`, (snap, index) => cellHtml(snap, pair(Calc.formatPct(snap.returnPct), formatSignedContract(snap.pnlPerContract))), "return"],
     ["IV", (snap) => cellHtml(snap, `${snap.option.impliedVolatility.toFixed(1)}%`)],
-    ["Expiration", (snap) => snap.pending ? "\u2026" : expiryLabel(snap.expiry)],
+    ["Expiration", (snap) => snap.pending ? "…" : expiryLabel(snap.expiry)],
     ["Delta", (snap) => cellHtml(snap, formatDelta(snap.delta))],
-    ["Gamma", (snap) => cellHtml(snap, snap.gamma == null ? "\u2014" : snap.gamma.toFixed(3))],
+    ["Gamma", (snap) => cellHtml(snap, snap.gamma == null ? "—" : snap.gamma.toFixed(3))],
     ["Theta / day", (snap) => cellHtml(snap, formatTheta(snap.theta))],
-    ["Vega / 1% IV", (snap) => cellHtml(snap, formatVega(snap.vega))]
+    ["Vega / 1% IV", (snap) => cellHtml(snap, formatVega(snap.vega))],
   ];
   const head = snaps.map((snap) => `
     <th style="color:${snap.color}">
@@ -1558,6 +1038,7 @@ function renderCompareNumbers() {
   }).join("");
   els.compareTable.innerHTML = `<thead><tr><th></th>${head}</tr></thead><tbody>${body}</tbody>`;
 }
+
 function renderInsight(snaps) {
   const priced = snaps.filter((snap) => !snap.pending && !snap.missing && snap.premium > 0 && snap.returnPct != null);
   if (priced.length < 2) {
@@ -1565,23 +1046,27 @@ function renderInsight(snaps) {
     return;
   }
   const primary = priced.find((snap) => snap.primary) ?? priced[0];
-  const best = priced.reduce((left, right) => right.returnPct > left.returnPct ? right : left);
-  const other = best === primary ? priced.filter((snap) => snap !== primary).reduce((left, right) => right.returnPct > left.returnPct ? right : left) : primary;
+  const best = priced.reduce((left, right) => (right.returnPct > left.returnPct ? right : left));
+  const other = best === primary
+    ? priced.filter((snap) => snap !== primary).reduce((left, right) => (right.returnPct > left.returnPct ? right : left))
+    : primary;
   const at = formatPrice(state.targetPrice);
   const name = (snap) => `${formatPrice(snap.strike)} ${snap.right}`;
   const risk = (snap) => formatUnsignedContract(snap.maxLossPerContract);
   if (best === primary) {
-    els.compareInsight.textContent = `Your ${name(primary)} returns ${formatPct(primary.returnPct)} if the stock is at ${at} by expiry. The ${name(other)} returns ${formatPct(other.returnPct)}, risks ${risk(other)} per contract, and breaks even at ${formatPrice(other.breakeven)}.`;
+    els.compareInsight.textContent = `Your ${name(primary)} returns ${Calc.formatPct(primary.returnPct)} if the stock is at ${at} by expiry. The ${name(other)} returns ${Calc.formatPct(other.returnPct)}, risks ${risk(other)} per contract, and breaks even at ${formatPrice(other.breakeven)}.`;
   } else {
-    els.compareInsight.textContent = `At ${at}, the ${name(best)} returns ${formatPct(best.returnPct)}, ahead of your ${name(primary)} at ${formatPct(primary.returnPct)}. It risks ${risk(best)} per contract and breaks even at ${formatPrice(best.breakeven)}.`;
+    els.compareInsight.textContent = `At ${at}, the ${name(best)} returns ${Calc.formatPct(best.returnPct)}, ahead of your ${name(primary)} at ${Calc.formatPct(primary.returnPct)}. It risks ${risk(best)} per contract and breaks even at ${formatPrice(best.breakeven)}.`;
   }
 }
+
 function headerCell(column) {
   if (column.helpKey) {
     return `<th><button type="button" class="th-help" data-help="${column.helpKey}">${column.label}</button></th>`;
   }
   return `<th>${column.label}</th>`;
 }
+
 function renderChainTable() {
   const rows = currentOptions();
   const spot = state.info?.currentPrice ?? 0;
@@ -1593,19 +1078,20 @@ function renderChainTable() {
     return;
   }
   if (state.selectedStrike == null || !rows.some((row) => row.strike === state.selectedStrike)) {
-    state.selectedStrike = rows[nearestIndex(rows.map((row) => row.strike), spot)].strike;
+    state.selectedStrike = rows[Calc.nearestIndex(rows.map((row) => row.strike), spot)].strike;
   }
-  const maxVol = maxMetric(rows, "volume");
-  const maxOi = maxMetric(rows, "openInterest");
+  const maxVol = Calc.maxMetric(rows, "volume");
+  const maxOi = Calc.maxMetric(rows, "openInterest");
   thead.innerHTML = `<tr><th>Strike</th>${CHAIN_COLUMNS.map(headerCell).join("")}</tr>`;
   tbody.innerHTML = rows.map((row) => {
     const selected = row.strike === state.selectedStrike ? "selected" : "";
     const atm = row.moneyness === "ATM" ? "atm" : "";
     const cells = CHAIN_COLUMNS.map((column) => chainCell(row, column.id, maxVol, maxOi)).join("");
-    return `<tr class="${[selected, atm].filter(Boolean).join(" ")}" data-strike="${row.strike}" tabindex="0" aria-selected="${row.strike === state.selectedStrike ? "true" : "false"}"><td>${money(row.strike)}</td>${cells}</tr>`;
+    return `<tr class="${[selected, atm].filter(Boolean).join(" ")}" data-strike="${row.strike}" tabindex="0" aria-selected="${row.strike === state.selectedStrike ? "true" : "false"}"><td>${Calc.money(row.strike)}</td>${cells}</tr>`;
   }).join("");
   revealSelectedRow();
 }
+
 function revealSelectedRow() {
   const wrap = els.chainTable.closest(".chain-scroll");
   const row = els.chainTable.querySelector("tr.selected");
@@ -1618,18 +1104,21 @@ function revealSelectedRow() {
     wrap.scrollTop = Math.max(0, rowTop - wrap.clientHeight / 2 + row.offsetHeight / 2);
   }
 }
+
 function chainCell(row, field, maxVol, maxOi) {
-  if (field === "last") return `<td>${row.lastPrice > 0 ? money(row.lastPrice) : "\u2014"}</td>`;
+  if (field === "last") return `<td>${row.lastPrice > 0 ? Calc.money(row.lastPrice) : "—"}</td>`;
   if (field === "bidAsk") return `<td>${quotePair(row.bid, row.ask)}</td>`;
   if (field === "iv") return `<td>${row.impliedVolatility.toFixed(1)}%</td>`;
   if (field === "volume") return barCell(row.volume, maxVol, "vol");
   if (field === "oi") return barCell(row.openInterest, maxOi, "oi");
-  return "<td>\u2014</td>";
+  return "<td>—</td>";
 }
+
 function barCell(value, max, kind) {
-  const width = barWidthPct(value, max);
-  return `<td class="bar-cell"><div class="bar-metric"><span>${value ? compactNumber(value) : "\u2014"}</span><div class="bar-track" aria-hidden="true"><div class="bar ${kind}" style="width:${width.toFixed(1)}%"></div></div></div></td>`;
+  const width = Calc.barWidthPct(value, max);
+  return `<td class="bar-cell"><div class="bar-metric"><span>${value ? Calc.compactNumber(value) : "—"}</span><div class="bar-track" aria-hidden="true"><div class="bar ${kind}" style="width:${width.toFixed(1)}%"></div></div></div></td>`;
 }
+
 function syncStrikeWindowInputs() {
   if (state.strikeMin == null || state.strikeMax == null) return;
   els.strikeMinInput.value = state.strikeMin;
@@ -1643,22 +1132,24 @@ function syncStrikeWindowInputs() {
   els.strikeMinRange.value = state.strikeMin;
   els.strikeMaxRange.value = state.strikeMax;
   const span = state.chainMax - state.chainMin || 1;
-  const minPosition = (state.strikeMin - state.chainMin) / span * 100;
-  const maxPosition = (state.strikeMax - state.chainMin) / span * 100;
+  const minPosition = ((state.strikeMin - state.chainMin) / span) * 100;
+  const maxPosition = ((state.strikeMax - state.chainMin) / span) * 100;
   els.strikeMinRange.parentElement.style.setProperty("--min-position", `${minPosition}%`);
   els.strikeMinRange.parentElement.style.setProperty("--max-position", `${maxPosition}%`);
 }
+
 function typicalStrikeStep() {
   const strikes = chainStrikes();
   if (strikes.length < 2) return 0.5;
-  const step = typicalStep(strikes);
+  const step = Calc.typicalStep(strikes);
   return step >= 1 ? step : 0.5;
 }
+
 function setStrikeWindow(minStrike, maxStrike, { rebuild = true, sync = true } = {}) {
   const lo = Math.min(minStrike, maxStrike);
   const hi = Math.max(minStrike, maxStrike);
-  state.strikeMin = clamp(lo, state.chainMin, state.chainMax);
-  state.strikeMax = clamp(hi, state.chainMin, state.chainMax);
+  state.strikeMin = Calc.clamp(lo, state.chainMin, state.chainMax);
+  state.strikeMax = Calc.clamp(hi, state.chainMin, state.chainMax);
   if (state.strikeMin > state.strikeMax) {
     state.strikeMin = state.chainMin;
     state.strikeMax = state.chainMax;
@@ -1667,15 +1158,16 @@ function setStrikeWindow(minStrike, maxStrike, { rebuild = true, sync = true } =
   if (rebuild) rebuildHeatmap();
   if (sync) syncUrl({ replace: true });
 }
+
 function initStrikeWindow(option) {
   const strikes = chainStrikes();
-  const years = Math.max(yearsBetween(todayISO(), state.selectedExpiry), 2 / 365.25);
-  const bounds = defaultStrikeWindow(
+  const years = Math.max(Calc.yearsBetween(Calc.todayISO(), state.selectedExpiry), 2 / 365.25);
+  const bounds = Calc.defaultStrikeWindow(
     state.info.currentPrice,
     strikes,
     option.impliedVolatility,
     years,
-    option.strike
+    option.strike,
   );
   state.chainMin = bounds.chainMin;
   state.chainMax = bounds.chainMax;
@@ -1683,9 +1175,11 @@ function initStrikeWindow(option) {
   state.strikeMax = bounds.maxStrike;
   syncStrikeWindowInputs();
 }
+
 function contractKey() {
   return `${state.ticker}|${state.selectedExpiry}|${state.right}|${state.selectedStrike}`;
 }
+
 function ensureWindow() {
   const option = selectedOption();
   if (!option) return;
@@ -1699,6 +1193,7 @@ function ensureWindow() {
   state.pendingMax = null;
   state.windowKey = key;
 }
+
 function renderHeatmap() {
   const grid = state.heatmap;
   const option = selectedOption();
@@ -1707,53 +1202,58 @@ function renderHeatmap() {
   const cols = grid.columns.length;
   els.heatmap.style.gridTemplateColumns = `minmax(48px, 14%) repeat(${cols}, minmax(0, 1fr))`;
   els.heatmap.style.gridTemplateRows = `auto repeat(${grid.rows.length}, minmax(0, 1fr))`;
+
   const head = [
     `<div class="cell head">Price</div>`,
     ...grid.columns.map((column) => {
-      const label = formatDateLabel(column.date, todayISO(), state.selectedExpiry);
+      const label = Calc.formatDateLabel(column.date, Calc.todayISO(), state.selectedExpiry);
       return `<div class="cell head">${label}</div>`;
-    })
+    }),
   ];
+
   const body = grid.rows.flatMap((price, rowIndex) => {
-    const delta = (price - spot) / spot * 100;
+    const delta = ((price - spot) / spot) * 100;
     const rowClass = [
       "cell rowhead",
       price === grid.spotRow ? "spot" : "",
-      price === grid.strikeRow ? "strike" : ""
+      price === grid.strikeRow ? "strike" : "",
     ].join(" ");
-    const header = `<div class="${rowClass}">${money(price, price >= 100 ? 0 : 2)}<small>${delta >= 0 ? "+" : "\u2212"}${Math.abs(delta).toFixed(0)}%</small></div>`;
+    const header = `<div class="${rowClass}">${Calc.money(price, price >= 100 ? 0 : 2)}<small>${delta >= 0 ? "+" : "−"}${Math.abs(delta).toFixed(0)}%</small></div>`;
     const cells = grid.cells[rowIndex].map((cell) => {
-      const text = state.display === "pct" ? formatPct(cell.pct) : formatMultiple(cell.multiple);
+      const text = state.display === "pct" ? Calc.formatPct(cell.pct) : Calc.formatMultiple(cell.multiple);
       const classes = [
         "cell",
         price === grid.spotRow ? "spot" : "",
-        price === grid.strikeRow ? "strike" : ""
+        price === grid.strikeRow ? "strike" : "",
       ].join(" ");
-      return `<div class="${classes}" style="background:${heatColor(cell.multiple, cell.pct)}">${text}</div>`;
+      return `<div class="${classes}" style="background:${Calc.heatColor(cell.multiple, cell.pct)}">${text}</div>`;
     });
     return [header, ...cells];
   });
+
   els.heatmap.innerHTML = [...head, ...body].join("");
 }
+
 function rebuildHeatmap() {
   const option = selectedOption();
   if (!option || !state.info || state.strikeMin == null || state.strikeMax == null) return;
-  const { maxCols, maxRows } = tableCapacity(window.innerWidth, window.innerHeight);
-  state.heatmap = buildHeatmap({
+  const { maxCols, maxRows } = Calc.tableCapacity(window.innerWidth, window.innerHeight);
+  state.heatmap = Calc.buildHeatmap({
     spot: state.info.currentPrice,
     option,
     isCall: state.right === "call",
     expiry: state.selectedExpiry,
-    today: todayISO(),
+    today: Calc.todayISO(),
     term: state.term,
     strikeMin: state.strikeMin,
     strikeMax: state.strikeMax,
     maxRows,
     maxCols,
-    strikes: chainStrikes()
+    strikes: chainStrikes(),
   });
   renderHeatmap();
 }
+
 function present() {
   renderQuote();
   ensureWindow();
@@ -1766,12 +1266,14 @@ function present() {
   rebuildHeatmap();
   if (els.history.open) renderChart();
 }
+
 function scheduleTerm() {
   clearTimeout(state.termTimer);
   state.termTimer = setTimeout(() => {
     refreshTerm();
   }, 180);
 }
+
 async function refreshTerm() {
   const option = selectedOption();
   if (!option || !state.selectedExpiry || !state.ticker) return;
@@ -1783,7 +1285,7 @@ async function refreshTerm() {
       ticker: state.ticker,
       expiry: state.selectedExpiry,
       strike: option.strike,
-      right: state.right
+      right: state.right,
     });
     if (token !== state.termToken) return;
     if (key !== `${state.ticker}|${state.selectedExpiry}|${state.selectedStrike}|${state.right}`) return;
@@ -1791,21 +1293,24 @@ async function refreshTerm() {
     state.termKey = key;
     rebuildHeatmap();
   } catch {
+    // The grid still prices off this contract's own IV.
   }
 }
+
 async function fetchChain(expiry) {
   const payload = await client.chain(state.ticker, expiry);
   const chain = {
     calls: payload.calls ?? [],
     puts: payload.puts ?? [],
     atmCallIv: payload.atmCallIv ?? null,
-    atmPutIv: payload.atmPutIv ?? null
+    atmPutIv: payload.atmPutIv ?? null,
   };
   state.chainCache[expiry] = chain;
   return chain;
 }
+
 async function ensureCompareChains() {
-  const expiries = /* @__PURE__ */ new Set();
+  const expiries = new Set();
   [0, 1].forEach((index) => {
     const slot = materializedSlot(index);
     if (slot && !slot.hidden && !slot.empty && slot.expiry && slot.expiry !== state.selectedExpiry && !state.chainCache[slot.expiry]) {
@@ -1823,7 +1328,7 @@ async function ensureCompareChains() {
         const chain = state.chainCache[expiry];
         const rows = slot.right === "put" ? chain.puts : chain.calls;
         if (rows.length && !rows.some((row) => row.strike === slot.strike)) {
-          slot.strike = rows.map((row) => row.strike)[nearestIndex(rows.map((row) => row.strike), slot.strike)];
+          slot.strike = rows.map((row) => row.strike)[Calc.nearestIndex(rows.map((row) => row.strike), slot.strike)];
         }
       });
       renderCompareEditors();
@@ -1836,6 +1341,7 @@ async function ensureCompareChains() {
     }
   }));
 }
+
 async function loadChain() {
   const expiry = state.selectedExpiry;
   const previous = state.loadedExpiry;
@@ -1851,10 +1357,10 @@ async function loadChain() {
     if (!currentOptions().some((row) => row.strike === state.selectedStrike)) {
       const strikes = chainStrikes();
       const anchor = state.selectedStrike ?? state.info.currentPrice;
-      state.selectedStrike = strikes.length ? strikes[nearestIndex(strikes, anchor)] : null;
+      state.selectedStrike = strikes.length ? strikes[Calc.nearestIndex(strikes, anchor)] : null;
     }
     if (!state.targetTouched) {
-      state.targetPrice = suggestedTarget(state.info.currentPrice, state.right === "call");
+      state.targetPrice = Calc.suggestedTarget(state.info.currentPrice, state.right === "call");
     }
     state.term = [];
     state.termKey = "";
@@ -1872,13 +1378,14 @@ async function loadChain() {
     els.expiry.disabled = false;
   }
 }
+
 async function loadTicker(ticker, {
   expiry,
   right,
   strike,
   target = null,
   compare = null,
-  pushUrl = true
+  pushUrl = true,
 } = {}) {
   const symbol = ticker.trim().toUpperCase();
   if (!symbol) return;
@@ -1887,11 +1394,11 @@ async function loadTicker(ticker, {
   els.lookup.disabled = true;
   els.refresh.disabled = true;
   setBanner(els.pickError, "");
-  toast(sameTicker ? "Refreshing\u2026" : "Loading stock\u2026");
+  toast(sameTicker ? "Refreshing…" : "Loading stock…");
   try {
     const [stock, expirationsPayload] = await Promise.all([
       client.stock(symbol),
-      client.expirations(symbol)
+      client.expirations(symbol),
     ]);
     state.ticker = symbol;
     state.info = stock.info;
@@ -1904,7 +1411,7 @@ async function loadTicker(ticker, {
     state.windowKey = "";
     if (expiry && state.expirations.includes(expiry)) state.selectedExpiry = expiry;
     else if (!sameTicker || !state.expirations.includes(state.selectedExpiry)) {
-      state.selectedExpiry = pickDefaultExpiry2(state.expirations);
+      state.selectedExpiry = pickDefaultExpiry(state.expirations);
     }
     if (right === "put" || right === "call") state.right = right;
     if (strike != null) state.selectedStrike = strike;
@@ -1912,7 +1419,9 @@ async function loadTicker(ticker, {
     if (!sameTicker) {
       state.compare = compare ?? defaultCompare();
       state.targetTouched = target != null && Number.isFinite(target);
-      state.targetPrice = state.targetTouched ? target : suggestedTarget(stock.info.currentPrice, state.right === "call");
+      state.targetPrice = state.targetTouched
+        ? target
+        : Calc.suggestedTarget(stock.info.currentPrice, state.right === "call");
     } else {
       if (compare) state.compare = compare;
       if (target != null && Number.isFinite(target)) {
@@ -1950,6 +1459,7 @@ async function loadTicker(ticker, {
     toast("");
   }
 }
+
 function selectStrike(strike, { focus = false, sync = true } = {}) {
   if (!Number.isFinite(strike) || strike === state.selectedStrike) {
     if (focus) els.chainTable.querySelector("tr.selected")?.focus();
@@ -1964,16 +1474,17 @@ function selectStrike(strike, { focus = false, sync = true } = {}) {
   if (sync) queueUrl();
   scheduleTerm();
 }
+
 function setRight(right) {
   if (state.right === right) return;
   state.right = right;
   if (!currentOptions().some((row) => row.strike === state.selectedStrike)) {
     const strikes = chainStrikes();
     const anchor = state.selectedStrike ?? state.info?.currentPrice ?? 0;
-    state.selectedStrike = strikes.length ? strikes[nearestIndex(strikes, anchor)] : null;
+    state.selectedStrike = strikes.length ? strikes[Calc.nearestIndex(strikes, anchor)] : null;
   }
   if (!state.targetTouched && state.info) {
-    state.targetPrice = suggestedTarget(state.info.currentPrice, right === "call");
+    state.targetPrice = Calc.suggestedTarget(state.info.currentPrice, right === "call");
   }
   state.term = [];
   state.termKey = "";
@@ -1982,13 +1493,14 @@ function setRight(right) {
   queueUrl();
   scheduleTerm();
 }
+
 function setCompare(index, patch) {
   const base = materializedSlot(index);
   const next = { ...base, ...patch, auto: false, hidden: patch.hidden ?? false, empty: false };
   if ((patch.expiry || patch.right) && chainFor(next.expiry)) {
     const strikes = strikesFor(next.expiry, next.right);
     if (strikes.length && !strikes.includes(next.strike)) {
-      next.strike = strikes[nearestIndex(strikes, next.strike)];
+      next.strike = strikes[Calc.nearestIndex(strikes, next.strike)];
     }
   }
   state.compare[index] = next;
@@ -1997,6 +1509,7 @@ function setCompare(index, patch) {
   renderCompareNumbers();
   queueUrl();
 }
+
 function openHelp(key) {
   const copy = HELP_COPY[key];
   if (!copy) return;
@@ -2004,21 +1517,27 @@ function openHelp(key) {
   els.helpBody.textContent = copy.body;
   els.helpModal.showModal();
 }
+
 renderChips();
+
 els.form.addEventListener("submit", (event) => {
   event.preventDefault();
   loadTicker(els.input.value);
 });
+
 els.switchForm.addEventListener("submit", (event) => {
   event.preventDefault();
   loadTicker(els.switchInput.value);
 });
+
 els.chips.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-ticker]");
   if (button) loadTicker(button.dataset.ticker);
 });
+
 els.backPick.addEventListener("click", goBack);
 els.refresh.addEventListener("click", () => loadTicker(state.ticker, { pushUrl: false }));
+
 els.periods.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-period]");
   if (!button) return;
@@ -2027,14 +1546,17 @@ els.periods.addEventListener("click", (event) => {
   renderChart();
   syncUrl({ replace: true });
 });
+
 els.expiry.addEventListener("change", () => {
   state.selectedExpiry = els.expiry.value;
   loadChain().then(() => {
     if (!state.restoring) queueUrl();
   });
 });
+
 els.typeCall.addEventListener("click", () => setRight("call"));
 els.typePut.addEventListener("click", () => setRight("put"));
+
 els.chartToggle.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-chart]");
   if (!button) return;
@@ -2043,27 +1565,31 @@ els.chartToggle.addEventListener("click", (event) => {
   renderChart();
   syncUrl({ replace: true });
 });
+
 els.strikeScroll.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-strike]");
   if (!button) return;
   selectStrike(Number(button.dataset.strike));
 });
+
 els.moveChips.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-move]");
   if (!button || !state.info) return;
   const pct = Number(button.dataset.move);
   setTarget(state.info.currentPrice * (1 + pct / 100));
 });
+
 els.targetRange.addEventListener("input", () => {
   setTarget(Number(els.targetRange.value));
 });
+
 els.targetInput.addEventListener("input", () => {
   const value = Number(els.targetInput.value);
   if (!Number.isFinite(value) || value <= 0 || !state.info) return;
   state.targetPrice = value;
   state.targetTouched = true;
-  els.targetRange.value = String(clamp(value, Number(els.targetRange.min), Number(els.targetRange.max)));
-  const pct = (value - state.info.currentPrice) / state.info.currentPrice * 100;
+  els.targetRange.value = String(Calc.clamp(value, Number(els.targetRange.min), Number(els.targetRange.max)));
+  const pct = ((value - state.info.currentPrice) / state.info.currentPrice) * 100;
   els.targetMove.className = `target-move ${pct > 0.05 ? "up" : pct < -0.05 ? "down" : ""}`;
   els.targetMove.textContent = formatMove(value, state.info.currentPrice);
   renderMoveChips();
@@ -2071,15 +1597,18 @@ els.targetInput.addEventListener("input", () => {
   renderPayoff();
   renderCompareNumbers();
 });
+
 els.targetInput.addEventListener("change", () => {
   setTarget(Number(els.targetInput.value));
 });
+
 els.payoff.addEventListener("pointerdown", (event) => {
   const plot = els.payoff.querySelector(".chart-plot");
   if (!plot || !plot.contains(event.target)) return;
   els.payoff.setPointerCapture(event.pointerId);
   setTarget(priceFromClientX(event.clientX));
 });
+
 els.payoff.addEventListener("pointermove", (event) => {
   const plot = els.payoff.querySelector(".chart-plot");
   if (!plot) return;
@@ -2088,16 +1617,19 @@ els.payoff.addEventListener("pointermove", (event) => {
     return;
   }
   if (event.pointerType === "mouse" && plot.contains(event.target)) {
-    updatePayoffTip(snapPrice2(priceFromClientX(event.clientX), priceStep2(state.info?.currentPrice || 1)));
+    updatePayoffTip(snapPrice(priceFromClientX(event.clientX), priceStep(state.info?.currentPrice || 1)));
   }
 });
+
 els.payoff.addEventListener("pointerup", (event) => {
   if (els.payoff.hasPointerCapture(event.pointerId)) els.payoff.releasePointerCapture(event.pointerId);
 });
+
 els.payoff.addEventListener("pointerleave", () => {
   const tip = els.payoff.querySelector(".payoff-tip");
   if (tip) tip.hidden = true;
 });
+
 els.compareReset.addEventListener("click", () => {
   state.compare = defaultCompare();
   renderCompareEditors();
@@ -2105,6 +1637,7 @@ els.compareReset.addEventListener("click", () => {
   renderCompareNumbers();
   queueUrl();
 });
+
 els.compareEditors.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-slot]");
   if (!button) return;
@@ -2126,6 +1659,7 @@ els.compareEditors.addEventListener("click", (event) => {
     setCompare(index, { right: button.dataset.right === "put" ? "put" : "call" });
   }
 });
+
 els.compareEditors.addEventListener("change", (event) => {
   const field = event.target.dataset.field;
   const index = Number(event.target.dataset.slot);
@@ -2133,6 +1667,7 @@ els.compareEditors.addEventListener("change", (event) => {
   if (field === "strike") setCompare(index, { strike: Number(event.target.value) });
   if (field === "expiry") setCompare(index, { expiry: event.target.value });
 });
+
 els.chainTable.addEventListener("click", (event) => {
   const help = event.target.closest("button[data-help]");
   if (help) {
@@ -2144,6 +1679,7 @@ els.chainTable.addEventListener("click", (event) => {
   if (!row) return;
   selectStrike(Number(row.dataset.strike));
 });
+
 els.chainTable.addEventListener("keydown", (event) => {
   const row = event.target.closest("tr[data-strike]");
   if (!row) return;
@@ -2160,22 +1696,27 @@ els.chainTable.addEventListener("keydown", (event) => {
     selectStrike(Number(row.dataset.strike), { focus: true });
   }
 });
+
 els.strikeMinRange.addEventListener("input", () => {
   const min = Number(els.strikeMinRange.value);
   const max = Math.max(min, Number(els.strikeMaxRange.value));
   setStrikeWindow(min, max);
 });
+
 els.strikeMaxRange.addEventListener("input", () => {
   const max = Number(els.strikeMaxRange.value);
   const min = Math.min(max, Number(els.strikeMinRange.value));
   setStrikeWindow(min, max);
 });
+
 els.strikeMinInput.addEventListener("change", () => {
   setStrikeWindow(Number(els.strikeMinInput.value), Number(els.strikeMaxInput.value));
 });
+
 els.strikeMaxInput.addEventListener("change", () => {
   setStrikeWindow(Number(els.strikeMinInput.value), Number(els.strikeMaxInput.value));
 });
+
 els.modeMultiple.addEventListener("click", () => {
   state.display = "multiple";
   els.modeMultiple.classList.add("active");
@@ -2183,6 +1724,7 @@ els.modeMultiple.addEventListener("click", () => {
   renderHeatmap();
   syncUrl({ replace: true });
 });
+
 els.modePct.addEventListener("click", () => {
   state.display = "pct";
   els.modePct.classList.add("active");
@@ -2190,18 +1732,22 @@ els.modePct.addEventListener("click", () => {
   renderHeatmap();
   syncUrl({ replace: true });
 });
+
 els.history.addEventListener("toggle", () => {
   if (!els.history.open) return;
   requestAnimationFrame(() => renderChart());
 });
+
 els.helpClose.addEventListener("click", () => els.helpModal.close());
 els.helpModal.addEventListener("click", (event) => {
   if (event.target === els.helpModal) els.helpModal.close();
 });
+
 window.addEventListener("resize", () => {
   if (els.analyzer.hidden) return;
   renderPayoff();
   rebuildHeatmap();
   if (els.history.open) renderChart();
 });
+
 restoreFromUrl();

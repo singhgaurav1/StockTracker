@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import * as Calc from "../public/calc.js";
+import * as Calc from "../shared/src/index.ts";
 
 test("default strike window uses IV with wider guardrails", () => {
   const strikes = [80, 90, 100, 110, 120];
@@ -41,7 +41,7 @@ test("IV interpolation uses the term structure", () => {
     { date: "2026-09-04", iv: 40 },
     { date: "2026-10-16", iv: 20 },
   ];
-  const mid = Calc.interpolateIv(term, "2026-09-25");
+  const mid = Calc.interpolateIv(term, "2026-09-25", "2026-09-01");
   assert.equal(mid > 20 && mid < 40, true);
 });
 
